@@ -23,6 +23,7 @@ function love.load()
             jump = 'sprites/Pink_Monster_Jump_8.png',
             idle = 'sprites/Pink_Monster_Idle_4.png',
             deathSheet = "sprites/Pink_Monster_Death_8.png",
+            hurt = 'sprites/Pink_Monster_Hurt_4.png',
             image = love.graphics.newImage("sprites/Pink_Monster.png")
         },
         {
@@ -31,6 +32,7 @@ function love.load()
             jump = 'sprites/Owlet_Monster_Jump_8.png',
             idle = 'sprites/Owlet_Monster_Idle_4.png',
             deathSheet = "sprites/Owlet_Monster_Death_8.png",
+            hurt = 'sprites/Owlet_Monster_Hurt_4.png',
             image = love.graphics.newImage("sprites/Owlet_Monster.png")
         },
         {
@@ -39,6 +41,7 @@ function love.load()
             jump = 'sprites/Dude_Monster_Jump_8.png',
             idle = 'sprites/Dude_Monster_Idle_4.png',
             deathSheet = "sprites/Dude_Monster_Death_8.png",
+            hurt = 'sprites/Dude_Monster_Hurt_4.png',
             image = love.graphics.newImage("sprites/Dude_Monster.png")
         }
     }
@@ -67,7 +70,9 @@ function love.load()
         flip = false,
         isDead = false,
         deathTimer = 0,
-        fadeAlpha = 0
+        fadeAlpha = 0,
+        isHurt = false,
+        hurtTimer = 0
     }
 
     --Load default (Pink Monster)
@@ -88,13 +93,36 @@ function love.load()
     enemy.grid = anim8.newGrid(128, 128, enemy.sheet:getWidth(), enemy.sheet:getHeight())
     enemy.anim = anim8.newAnimation(enemy.grid('1-7', 1), 0.1)
 
-    -- Game variables
+    --Game variables
     font = love.graphics.newFont(24)
     distance = 0
     camera.x = 0
 
+    --Bomb setup
+    bomb = {
+        image = love.graphics.newImage("sprites/bomb.png"),
+        x = -100,
+        y = groundY - 32 * 3,
+        width = 32,
+        height = 32,
+        active = false
+    }
+    bombSpawnTimer = 0
+    bombSpawnInterval = math.max(1.5, 5 - distance / 200)
+
+    --Explosion setup
+    explosion = {
+        image = love.graphics.newImage("sprites/explosion.png"),
+        active = false,
+        x = 0,
+        y = 0,
+        scale = 2
+    }
+    local explosionGrid = anim8.newGrid(64, 64, explosion.image:getWidth(), explosion.image:getHeight())
+    explosion.anim = anim8.newAnimation(explosionGrid('1-4', 1, '1-4', 2, '1-4', 3, '1-4', 4), 0.08, 'pauseAtEnd')
+    
     -- Game state management
-    gameState = "menu" -- menu, character_select, playing, gameover
+    gameState = "menu" 
     blinkTimer = 0
     blinkVisible = true
 end
@@ -107,23 +135,26 @@ function loadSelectedCharacter()
     player.jumpSheet = love.graphics.newImage(char.jump)
     player.idleSheet = love.graphics.newImage(char.idle)
     player.deathSheet = love.graphics.newImage(char.deathSheet)
+    player.hurtSheet = love.graphics.newImage(char.hurt)
 
     player.runGrid  = anim8.newGrid(32, 32, player.runSheet:getWidth(),  player.runSheet:getHeight())
     player.jumpGrid = anim8.newGrid(32, 32, player.jumpSheet:getWidth(), player.jumpSheet:getHeight())
     player.idleGrid = anim8.newGrid(32, 32, player.idleSheet:getWidth(), player.idleSheet:getHeight())
     player.deathGrid = anim8.newGrid(32, 32, player.deathSheet:getWidth(), player.deathSheet:getHeight())
+    player.hurtGrid = anim8.newGrid(32, 32, player.hurtSheet:getWidth(), player.hurtSheet:getHeight())
 
     player.runAnim  = anim8.newAnimation(player.runGrid('1-6', 1), 0.1)
     player.jumpAnim = anim8.newAnimation(player.jumpGrid('1-8', 1), 0.08)
     player.idleAnim = anim8.newAnimation(player.idleGrid('1-4', 1), 0.25)
     player.deathAnim = anim8.newAnimation(player.deathGrid('1-8', 1), 0.08)
+    player.hurtAnim = anim8.newAnimation(player.hurtGrid('1-4', 1), 0.1)
 
     player.currentAnim = player.idleAnim
 end
 
 
 function love.update(dt)
-    -- Blinking text for menu
+    --Blinking text for menu
     if gameState == "menu" then
         blinkTimer = blinkTimer + dt
         if blinkTimer > 0.6 then
@@ -152,19 +183,16 @@ function love.update(dt)
         player.deathAnim:update(dt)
         player.deathTimer = player.deathTimer + dt
 
-        --Screen shakes when player dies
         if player.deathTimer < 0.4 then
             camera.shake = 10 * (0.4 - player.deathTimer)
         else
             camera.shake = math.max(camera.shake - dt * 15, 0)
         end
 
-        --Fade to black
         if player.deathTimer > 0.6 then
             player.fadeAlpha = math.min(player.fadeAlpha + dt * 0.8, 1)
         end
 
-        --After death anim finishes
         if player.deathTimer > 0.5 then
             gameState = "gameover"
         end
@@ -194,10 +222,75 @@ function love.update(dt)
         player.y = groundY - player.height * 3
         player.yVelocity = 0
         player.onGround = true
-        player.currentAnim = isMoving and player.runAnim or player.idleAnim
+        if not player.isHurt then
+            player.currentAnim = isMoving and player.runAnim or player.idleAnim
+        end
     else
         player.onGround = false
-        player.currentAnim = player.jumpAnim
+        if not player.isHurt then
+            player.currentAnim = player.jumpAnim
+        end
+    end
+
+    --Bomb spawn logic
+    bombSpawnTimer = bombSpawnTimer + dt
+    if bombSpawnTimer >= bombSpawnInterval and not bomb.active then
+        bomb.x = player.x + love.math.random(400, 800)
+        bomb.y = groundY - 32 * 3
+        bomb.active = true
+        bombSpawnTimer = 0
+        bombSpawnInterval = math.max(1.5, 5 - distance / 200)
+    end
+
+    if bomb.active and bomb.x < player.x - 200 then
+        bomb.active = false
+    end
+
+    --Bomb collision with the player
+    if bomb.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
+                                      bomb.x, bomb.y, bomb.width, bomb.height) then
+        bomb.active = false
+
+        -- Trigger explosion
+        explosion.active = true
+        explosion.x = bomb.x - 64
+        explosion.y = bomb.y - 64
+        explosion.anim:gotoFrame(1)
+        explosion.anim:resume()
+
+        player.speed = player.speed * 0.5
+        player.slowTimer = 1
+        player.isHurt = true
+        player.hurtTimer = 0
+        player.currentAnim = player.hurtAnim
+        player.hurtAnim:gotoFrame(1)
+    end
+
+    --Update explosion animation
+    if explosion.active then
+        explosion.anim:update(dt)
+        if explosion.anim.position == explosion.anim.totalFrames then
+            explosion.active = false
+        end
+    end
+
+    --Player speed reset after bomb hit
+    if player.slowTimer then
+        player.slowTimer = player.slowTimer - dt
+        if player.slowTimer <= 0 then
+            player.speed = 350
+            player.slowTimer = nil
+        end
+    end
+
+    --Handle hurt animation timing
+    if player.isHurt then
+        player.hurtTimer = player.hurtTimer + dt
+        player.hurtAnim:update(dt)
+        if player.hurtTimer > 0.4 then
+            player.isHurt = false
+            player.currentAnim = player.idleAnim
+        end
     end
 
     --Gorgon chases player
@@ -211,19 +304,16 @@ function love.update(dt)
         end
     end
 
-    --Enemy respawn behind player if player gets too far
     if enemy.x < player.x - 800 then
         enemy.x = player.x - love.math.random(500, 800)
     end
 
-    --Camera follows player always
     camera.x = player.x - love.graphics.getWidth() / 2
     if camera.x < 0 then camera.x = 0 end
 
-    --Distance
     distance = math.floor(player.x / 10)
 
-    -- Collision detection (only if alive)
+    --Collision detection (player vs enemy)
     local playerScale = 3
     local enemyScale = 1.5
     if not player.isDead and
@@ -236,14 +326,12 @@ function love.update(dt)
         camera.shake = 10 
     end
 
-    --Update animations
     player.currentAnim:update(dt)
     enemy.anim:update(dt)
 end
 
 
 function love.draw()
-    --Main Menu Screen
     if gameState == "menu" then
         local bgScroll = (love.timer.getTime() * 50) % background:getWidth()
         for i = -1, math.ceil(love.graphics.getWidth() / background:getWidth()) + 1 do
@@ -273,7 +361,6 @@ function love.draw()
         return
     end
 
-    --Character Select Screen
     if gameState == "character_select" then
         love.graphics.draw(background, 0, 0)
         love.graphics.setColor(0, 0, 0, 0.6)
@@ -300,7 +387,6 @@ function love.draw()
                 pulse = 1 + 0.05 * math.sin(love.timer.getTime() * 5)
             end
 
-            -- 🔹 Animated character preview (idle animation)
             local bounce = 5 * math.sin(love.timer.getTime() * 5)
             char.idleAnim:draw(char.idleSheet, x, y + bounce, 0, scale * pulse, scale * pulse)
 
@@ -315,15 +401,11 @@ function love.draw()
         return
     end
 
-    --GAMEPLAY DRAW
     love.graphics.push()
-
-    -- Screen shake effect
     local shakeX = math.random(-camera.shake, camera.shake)
     local shakeY = math.random(-camera.shake, camera.shake)
     love.graphics.translate(-camera.x + shakeX, shakeY)
 
-    --Background goes on forever
     local bgWidth = background:getWidth()
     local startBg = math.floor(camera.x / bgWidth)
     local endBg = startBg + math.ceil(love.graphics.getWidth() / bgWidth) + 1
@@ -331,12 +413,10 @@ function love.draw()
         love.graphics.draw(background, i * bgWidth, 0)
     end
 
-    --Graphics of the ground
     love.graphics.setColor(0.3, 0.8, 0.3)
     love.graphics.rectangle("fill", camera.x - 1000, groundY, love.graphics.getWidth() + 2000, 100)
     love.graphics.setColor(1, 1, 1)
 
-    --Graphics of the player
     local scale = 3
     if player.isDead then
         if player.flip then
@@ -350,6 +430,8 @@ function love.draw()
             sheet = player.runSheet
         elseif player.currentAnim == player.jumpAnim then
             sheet = player.jumpSheet
+        elseif player.currentAnim == player.hurtAnim then
+            sheet = player.hurtSheet
         end
         if player.flip then
             player.currentAnim:draw(sheet, player.x + player.width * scale, player.y, 0, -scale, scale)
@@ -358,7 +440,7 @@ function love.draw()
         end
     end
 
-    --Graphics of the gorgon
+    --Draw enemy
     local enemyScale = 1.5
     if enemy.flip then
         enemy.anim:draw(enemy.sheet, enemy.x + enemy.width * enemyScale, enemy.y, 0, -enemyScale, enemyScale)
@@ -366,23 +448,30 @@ function love.draw()
         enemy.anim:draw(enemy.sheet, enemy.x, enemy.y, 0, enemyScale, enemyScale)
     end
 
+    --Draw bomb
+    if bomb.active then
+        love.graphics.draw(bomb.image, bomb.x, bomb.y, 0, 3, 3)
+    end
+
+    --Draw explosion
+    if explosion.active then
+        explosion.anim:draw(explosion.image, explosion.x, explosion.y, 0, explosion.scale, explosion.scale)
+    end
+
     love.graphics.pop()
 
-    --Distance display
     if gameState == "playing" then
         love.graphics.setFont(font)
         love.graphics.setColor(1, 1, 1)
         love.graphics.print("Distance: " .. distance .. " m", 20, 20)
     end
 
-    --Death fade
     if player.isDead then
         love.graphics.setColor(0, 0, 0, player.fadeAlpha * 0.7)
         love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
         love.graphics.setColor(1, 1, 1)
     end
 
-    --Game Over Screen
     if gameState == "gameover" then
         love.graphics.setColor(0, 0, 0, 0.6)
         love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
