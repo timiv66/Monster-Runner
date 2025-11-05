@@ -11,7 +11,8 @@ function love.load()
     --Custom Fonts
     fonts = {
         title = love.graphics.newFont("fonts/MonsterTitle.ttf", 72),
-        subtitle = love.graphics.newFont("fonts/MonsterTitle.ttf", 28)
+        subtitle = love.graphics.newFont("fonts/MonsterTitle.ttf", 28),
+        character_select = love.graphics.newFont("fonts/MonsterTitle.ttf", 36)
     }
 
     --Character selection setup
@@ -42,6 +43,14 @@ function love.load()
         }
     }
 
+    --Load idle animations for all characters for the animated preview
+    for _, char in ipairs(characters) do
+        local idleSheet = love.graphics.newImage(char.idle)
+        local idleGrid = anim8.newGrid(32, 32, idleSheet:getWidth(), idleSheet:getHeight())
+        char.idleAnim = anim8.newAnimation(idleGrid('1-4', 1), 0.25)
+        char.idleSheet = idleSheet
+    end
+
     selectedCharacter = 1
 
     --Player setup
@@ -52,8 +61,8 @@ function love.load()
         height = 32,
         speed = 350,
         yVelocity = 0,
-        jumpForce = -400,
-        gravity = 900,
+        jumpForce = -600,
+        gravity = 1500,
         onGround = true,
         flip = false,
         isDead = false,
@@ -120,6 +129,14 @@ function love.update(dt)
         if blinkTimer > 0.6 then
             blinkVisible = not blinkVisible
             blinkTimer = 0
+        end
+        return
+    end
+
+    --Update idle animations on character select screen
+    if gameState == "character_select" then
+        for _, char in ipairs(characters) do
+            char.idleAnim:update(dt)
         end
         return
     end
@@ -263,10 +280,8 @@ function love.draw()
         love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
         love.graphics.setColor(1, 1, 1)
 
-        local titleFont = love.graphics.newFont(56)
-        local smallFont = love.graphics.newFont(26)
-        love.graphics.setFont(titleFont)
-        love.graphics.printf("Select Your Character", 0, 100, love.graphics.getWidth(), "center")
+        love.graphics.setFont(fonts.title)
+        love.graphics.printf("Select Your Monster", 0, 100, love.graphics.getWidth(), "center")
 
         local startX = love.graphics.getWidth() / 2 - (#characters * 200) / 2 
         local y = 240
@@ -279,16 +294,21 @@ function love.draw()
                 love.graphics.rectangle("line", x - 10, y - 10, 32 * scale + 20, 32 * scale + 20, 10, 10)
                 love.graphics.setColor(1, 1, 1)
             end
+
             local pulse = 1
             if i == selectedCharacter then
                 pulse = 1 + 0.05 * math.sin(love.timer.getTime() * 5)
             end
-            love.graphics.draw(char.image, x, y, 0, scale * pulse, scale * pulse)
-            love.graphics.setFont(smallFont)
+
+            -- 🔹 Animated character preview (idle animation)
+            local bounce = 5 * math.sin(love.timer.getTime() * 5)
+            char.idleAnim:draw(char.idleSheet, x, y + bounce, 0, scale * pulse, scale * pulse)
+
+            love.graphics.setFont(fonts.subtitle)
             love.graphics.printf(char.name, x - 10, y + 180, 150, "center")
         end
 
-        love.graphics.setColor(1, 1, 1)
+        love.graphics.setColor(1, 1, 0.6)
         love.graphics.printf("< LEFT / RIGHT >", 0, 520, love.graphics.getWidth(), "center")
         love.graphics.printf("Press ENTER to Confirm", 0, 560, love.graphics.getWidth(), "center")
         love.graphics.printf("ESC to go back", 0, 600, love.graphics.getWidth(), "center")
