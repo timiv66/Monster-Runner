@@ -64,7 +64,7 @@ function love.load()
         height = 32,
         speed = 350,
         yVelocity = 0,
-        jumpForce = -600,
+        jumpForce = -700,
         gravity = 1500,
         onGround = true,
         flip = false,
@@ -120,6 +120,21 @@ function love.load()
     }
     local explosionGrid = anim8.newGrid(64, 64, explosion.image:getWidth(), explosion.image:getHeight())
     explosion.anim = anim8.newAnimation(explosionGrid('1-4', 1, '1-4', 2, '1-4', 3, '1-4', 4), 0.08, 'pauseAtEnd')
+
+    --Shield setup
+    shield = {
+        image = love.graphics.newImage("sprites/shield.png"), -- use your uploaded image
+        x = -100,
+        y = groundY - 32 * 3,
+        width = 32,
+        height = 32,
+        active = false,   -- if power-up is visible on screen
+        collected = false, -- if player currently has shield effect
+        duration = 5,     -- lasts for 5 seconds
+        timer = 0
+    }
+    shieldSpawnTimer = 0
+    shieldSpawnInterval = 10  -- appears every ~10 seconds
     
     -- Game state management
     gameState = "menu" 
@@ -235,8 +250,14 @@ function love.update(dt)
     --Bomb spawn logic
     bombSpawnTimer = bombSpawnTimer + dt
     if bombSpawnTimer >= bombSpawnInterval and not bomb.active then
-        bomb.x = player.x + love.math.random(400, 800)
-        bomb.y = groundY - 32 * 3
+         bomb.x = player.x + love.math.random(400, 800)
+
+        -- Calculate the player’s max jump height
+        local maxJumpHeight = groundY - ((player.jumpForce ^ 2) / (2 * player.gravity)) - player.height * 3
+
+        -- Random vertical position between ground and max height
+        bomb.y = love.math.random(maxJumpHeight, groundY - bomb.height)
+
         bomb.active = true
         bombSpawnTimer = 0
         bombSpawnInterval = math.max(1.5, 5 - distance / 200)
@@ -246,24 +267,46 @@ function love.update(dt)
         bomb.active = false
     end
 
-    --Bomb collision with the player
+    -- Shield spawn logic
+    shieldSpawnTimer = shieldSpawnTimer + dt
+    if shieldSpawnTimer >= shieldSpawnInterval and not shield.active and not shield.collected then
+        shield.x = player.x + love.math.random(400, 900)
+        shield.y = groundY - shield.height * 3
+        shield.active = true
+        shieldSpawnTimer = 0
+    end
+
+    -- Bomb collision with the player
     if bomb.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
                                       bomb.x, bomb.y, bomb.width, bomb.height) then
-        bomb.active = false
+        if not shield.collected then
+            bomb.active = false
 
-        -- Trigger explosion
-        explosion.active = true
-        explosion.x = bomb.x - 64
-        explosion.y = bomb.y - 64
-        explosion.anim:gotoFrame(1)
-        explosion.anim:resume()
+            -- Trigger explosion
+            explosion.active = true
+            explosion.x = bomb.x - 64
+            explosion.y = bomb.y - 64
+            explosion.anim:gotoFrame(1)
+            explosion.anim:resume()
 
-        player.speed = player.speed * 0.5
-        player.slowTimer = 1
-        player.isHurt = true
-        player.hurtTimer = 0
-        player.currentAnim = player.hurtAnim
-        player.hurtAnim:gotoFrame(1)
+            player.speed = player.speed * 0.5
+            player.slowTimer = 1
+            player.isHurt = true
+            player.hurtTimer = 0
+            player.currentAnim = player.hurtAnim
+            player.hurtAnim:gotoFrame(1)
+        else
+            -- Shield absorbs the hit
+            bomb.active = false
+        end
+    end
+
+    -- Shield pickup
+    if shield.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
+                                        shield.x, shield.y, shield.width, shield.height) then
+        shield.active = false
+        shield.collected = true
+        shield.timer = 0
     end
 
     --Update explosion animation
@@ -280,6 +323,14 @@ function love.update(dt)
         if player.slowTimer <= 0 then
             player.speed = 350
             player.slowTimer = nil
+        end
+    end
+
+    -- Update shield duration if collected
+    if shield.collected then
+        shield.timer = shield.timer + dt
+        if shield.timer >= shield.duration then
+            shield.collected = false
         end
     end
 
@@ -316,7 +367,7 @@ function love.update(dt)
     --Collision detection (player vs enemy)
     local playerScale = 3
     local enemyScale = 1.5
-    if not player.isDead and
+    if not player.isDead and not shield.collected and
        checkCollision(player.x, player.y, player.width * playerScale, player.height * playerScale,
                       enemy.x, enemy.y, enemy.width * enemyScale, enemy.height * enemyScale) then
         player.isDead = true
@@ -332,6 +383,7 @@ end
 
 
 function love.draw()
+    --Main Menu Screen
     if gameState == "menu" then
         local bgScroll = (love.timer.getTime() * 50) % background:getWidth()
         for i = -1, math.ceil(love.graphics.getWidth() / background:getWidth()) + 1 do
@@ -361,6 +413,7 @@ function love.draw()
         return
     end
 
+    --Character Selection Screen
     if gameState == "character_select" then
         love.graphics.draw(background, 0, 0)
         love.graphics.setColor(0, 0, 0, 0.6)
@@ -399,13 +452,15 @@ function love.draw()
         love.graphics.printf("Press ENTER to Confirm", 0, 560, love.graphics.getWidth(), "center")
         love.graphics.printf("ESC to go back", 0, 600, love.graphics.getWidth(), "center")
         return
-    end
-
+    end   
     love.graphics.push()
+    
+    --Camera shake effect
     local shakeX = math.random(-camera.shake, camera.shake)
     local shakeY = math.random(-camera.shake, camera.shake)
     love.graphics.translate(-camera.x + shakeX, shakeY)
-
+    
+    --Draw scrolling background
     local bgWidth = background:getWidth()
     local startBg = math.floor(camera.x / bgWidth)
     local endBg = startBg + math.ceil(love.graphics.getWidth() / bgWidth) + 1
@@ -417,6 +472,7 @@ function love.draw()
     love.graphics.rectangle("fill", camera.x - 1000, groundY, love.graphics.getWidth() + 2000, 100)
     love.graphics.setColor(1, 1, 1)
 
+    --Draw player
     local scale = 3
     if player.isDead then
         if player.flip then
@@ -458,20 +514,35 @@ function love.draw()
         explosion.anim:draw(explosion.image, explosion.x, explosion.y, 0, explosion.scale, explosion.scale)
     end
 
+    --Draw shield power-up
+    if shield.active then
+        love.graphics.draw(shield.image, shield.x, shield.y, 0, 3, 3)
+    end
+
+    --Draw shield effect around player if active
+    if shield.collected then
+        love.graphics.setColor(0, 0.7, 1, 0.4)
+        love.graphics.circle("fill", player.x + player.width * 1.5, player.y + player.height * 1.5, 60)
+        love.graphics.setColor(1, 1, 1)
+    end
+
     love.graphics.pop()
 
+    --Draw distance
     if gameState == "playing" then
         love.graphics.setFont(font)
         love.graphics.setColor(1, 1, 1)
         love.graphics.print("Distance: " .. distance .. " m", 20, 20)
     end
 
+    --Draw fade effect on death
     if player.isDead then
         love.graphics.setColor(0, 0, 0, player.fadeAlpha * 0.7)
         love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
         love.graphics.setColor(1, 1, 1)
     end
 
+    --Game Over Screen
     if gameState == "gameover" then
         love.graphics.setColor(0, 0, 0, 0.6)
         love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
