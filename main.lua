@@ -123,18 +123,28 @@ function love.load()
 
     --Shield setup
     shield = {
-        image = love.graphics.newImage("sprites/shield.png"), -- use your uploaded image
+        image = love.graphics.newImage("sprites/shield.png"),
         x = -100,
         y = groundY - 32 * 3,
         width = 32,
         height = 32,
-        active = false,   -- if power-up is visible on screen
-        collected = false, -- if player currently has shield effect
-        duration = 5,     -- lasts for 5 seconds
-        timer = 0
+        active = false,   
+        collected = false 
     }
     shieldSpawnTimer = 0
-    shieldSpawnInterval = 10  -- appears every ~10 seconds
+    shieldSpawnInterval = 10 
+    
+    --Pause Menu Buttons
+    pauseButtons = {
+        newGame = love.graphics.newImage("sprites/New Game  col_Button.png"),
+        resume  = love.graphics.newImage("sprites/Resume  col_Button.png"),
+        quit    = love.graphics.newImage("sprites/Quit  col_Button.png")
+    }
+    pauseMenu = {
+        active = false,
+        selected = 1,
+        options = {"Resume", "New Game", "Quit"}
+    }
     
     -- Game state management
     gameState = "menu" 
@@ -188,6 +198,11 @@ function love.update(dt)
     end
 
     if gameState ~= "playing" then
+        return
+    end
+
+    --Freeze gameplay while paused
+    if pauseMenu.active then
         return
     end
 
@@ -252,10 +267,10 @@ function love.update(dt)
     if bombSpawnTimer >= bombSpawnInterval and not bomb.active then
          bomb.x = player.x + love.math.random(400, 800)
 
-        -- Calculate the player’s max jump height
+        --Calculate the player’s max jump height
         local maxJumpHeight = groundY - ((player.jumpForce ^ 2) / (2 * player.gravity)) - player.height * 3
 
-        -- Random vertical position between ground and max height
+        --Random vertical position between ground and max height
         bomb.y = love.math.random(maxJumpHeight, groundY - bomb.height)
 
         bomb.active = true
@@ -276,7 +291,7 @@ function love.update(dt)
         shieldSpawnTimer = 0
     end
 
-    -- Bomb collision with the player
+    --Bomb collision with the player
     if bomb.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
                                       bomb.x, bomb.y, bomb.width, bomb.height) then
         if not shield.collected then
@@ -296,18 +311,17 @@ function love.update(dt)
             player.currentAnim = player.hurtAnim
             player.hurtAnim:gotoFrame(1)
         else
-            -- Shield absorbs the hit
+            --Shield absorbs the hit
             bomb.active = false
             shield.collected = false
         end
     end
 
-    -- Shield pickup
+    --Shield pickup
     if shield.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
                                         shield.x, shield.y, shield.width, shield.height) then
         shield.active = false
         shield.collected = true
-        shield.timer = 0
     end
 
     --Update explosion animation
@@ -357,17 +371,25 @@ function love.update(dt)
 
     distance = math.floor(player.x / 10)
 
-    --Collision detection (player vs enemy)
+    --Collision detection
     local playerScale = 3
     local enemyScale = 1.5
-    if not player.isDead and not shield.collected and
+    if not player.isDead and
        checkCollision(player.x, player.y, player.width * playerScale, player.height * playerScale,
                       enemy.x, enemy.y, enemy.width * enemyScale, enemy.height * enemyScale) then
-        player.isDead = true
-        player.deathTimer = 0
-        player.deathAnim:gotoFrame(1)
-        player.fadeAlpha = 0
-        camera.shake = 10 
+        if shield.collected then
+            -- consume shield on contact, prevent death once
+            shield.collected = false
+            -- small knockback for feedback
+            enemy.x = enemy.x - (enemy.flip and -60 or 60)
+            camera.shake = 6
+        else
+            player.isDead = true
+            player.deathTimer = 0
+            player.deathAnim:gotoFrame(1)
+            player.fadeAlpha = 0
+            camera.shake = 10 
+        end
     end
 
     player.currentAnim:update(dt)
@@ -528,6 +550,31 @@ function love.draw()
         love.graphics.print("Distance: " .. distance .. " m", 20, 20)
     end
 
+    --Pause Menu
+    if pauseMenu.active then
+        love.graphics.setColor(0, 0, 0, 0.6)
+        love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
+        love.graphics.setColor(1, 1, 1)
+
+        local screenWidth, screenHeight = love.graphics.getWidth(), love.graphics.getHeight()
+        local buttons = { pauseButtons.resume, pauseButtons.newGame, pauseButtons.quit }
+        local buttonSpacing = 140
+
+        local totalHeight = (#buttons - 1) * buttonSpacing
+        local startY = (screenHeight - totalHeight) / 2 - 75
+
+        for i, btn in ipairs(buttons) do
+            local y = startY + (i - 1) * buttonSpacing
+            local scaleBtn = (i == pauseMenu.selected) and 0.65 or 0.55
+            local btnWidth = btn:getWidth() * scaleBtn
+            local btnHeight = btn:getHeight() * scaleBtn
+            local x = (screenWidth - btnWidth) / 2
+            love.graphics.setColor(1, 1, 1, (i == pauseMenu.selected) and 1 or 0.7)
+            love.graphics.draw(btn, x, y, 0, scaleBtn, scaleBtn)
+        end
+        love.graphics.setColor(1, 1, 1)
+    end
+
     --Draw fade effect on death
     if player.isDead then
         love.graphics.setColor(0, 0, 0, player.fadeAlpha * 0.7)
@@ -555,6 +602,7 @@ function love.keypressed(key)
         end
 
     elseif gameState == "character_select" then
+        --Navigate character selection
         if key == "right" then
             selectedCharacter = selectedCharacter + 1
             if selectedCharacter > #characters then selectedCharacter = 1 end
@@ -569,6 +617,35 @@ function love.keypressed(key)
         end
 
     elseif gameState == "playing" then
+        if pauseMenu.active then
+            --Navigate pause menu
+            if key == "up" then
+                pauseMenu.selected = pauseMenu.selected - 1
+                if pauseMenu.selected < 1 then pauseMenu.selected = #pauseMenu.options end
+            elseif key == "down" then
+                pauseMenu.selected = pauseMenu.selected + 1
+                if pauseMenu.selected > #pauseMenu.options then pauseMenu.selected = 1 end
+            elseif key == "return" or key == "space" then
+                local choice = pauseMenu.options[pauseMenu.selected]
+                if choice == "Resume" then
+                    pauseMenu.active = false
+                elseif choice == "New Game" then
+                    love.load()
+                    gameState = "menu"
+                elseif choice == "Quit" then
+                    love.event.quit()
+                end
+            elseif key == "escape" then
+                pauseMenu.active = false
+            end
+            return
+        end
+
+        if key == "escape" then
+            pauseMenu.active = true
+            return
+        end
+
         if key == "space" and player.onGround and not player.isDead then
             player.yVelocity = player.jumpForce
             player.onGround = false
