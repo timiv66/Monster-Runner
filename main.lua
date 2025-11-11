@@ -298,6 +298,7 @@ function love.update(dt)
         else
             -- Shield absorbs the hit
             bomb.active = false
+            shield.collected = false
         end
     end
 
@@ -323,14 +324,6 @@ function love.update(dt)
         if player.slowTimer <= 0 then
             player.speed = 350
             player.slowTimer = nil
-        end
-    end
-
-    -- Update shield duration if collected
-    if shield.collected then
-        shield.timer = shield.timer + dt
-        if shield.timer >= shield.duration then
-            shield.collected = false
         end
     end
 
