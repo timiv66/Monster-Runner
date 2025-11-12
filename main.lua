@@ -115,6 +115,7 @@ function love.load()
     font = love.graphics.newFont(24)
     distance = 0
     camera.x = 0
+    score = 0
 
     --Bomb setup
     bomb = {
@@ -175,6 +176,17 @@ function love.load()
     }
     local firespellGrid = anim8.newGrid(32, 32, firespell.sheet:getWidth(), firespell.sheet:getHeight())
     firespell.anim = anim8.newAnimation(firespellGrid('1-8', 1), 0.08)
+
+    -- Coin setup (animated coin)
+    coin = {
+        sheet = love.graphics.newImage("sprites/coin_sheet.png"),
+        coins = {},
+        spawnTimer = 0,
+        spawnInterval = 2  -- seconds between spawns
+    }
+
+    local coinGrid = anim8.newGrid(32, 32, coin.sheet:getWidth(), coin.sheet:getHeight())
+    coin.anim = anim8.newAnimation(coinGrid('1-8', 1), 0.1)
     
     --Pause Menu Buttons
     pauseButtons = {
@@ -459,18 +471,17 @@ function love.update(dt)
     if fireballSpawnTimer >= fireballSpawnInterval and not fireball.active then
         fireball.x = player.x + love.math.random(400, 900)
     
-        local minY = groundY - fireball.height * 3.5
-        local maxY = groundY - fireball.height * 2.5
-        fireball.y = love.math.random(minY, maxY)
+       -- Calculate player's maximum jump height
+        local maxJumpHeight = groundY - ((player.jumpForce ^ 2) / (2 * player.gravity)) - player.height * 3
+
+        -- Fireball can appear ANYWHERE between player max jump height and ground level
+        fireball.y = love.math.random(maxJumpHeight, groundY - fireball.height * 3)
 
         fireball.active = true
         fireball.collected = false       
         fireballSpawnTimer = 0
         fireballSpawnInterval = math.random(4, 8) - math.min(distance / 1000, 3)
     end
-
-    --Fireball animation
-    fireball.anim:update(dt)
 
     --Fireball pickup
     if fireball.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
@@ -496,14 +507,38 @@ function love.update(dt)
     end
     fireball.anim:update(dt)
 
-    if fireball.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
-        fireball.x, fireball.y, fireball.width, fireball.height) then
-        fireball.active = false
-        fireball.collected = true
-        player.fireMode = true
-        player.fireTimer = 10 
+    --Coin spawn logic
+    coin.spawnTimer = coin.spawnTimer + dt
+    if coin.spawnTimer >= coin.spawnInterval then
+        --Calculate max jump height dynamically
+        local maxJumpHeight = groundY - ((player.jumpForce ^ 2) / (2 * player.gravity)) - player.height * 3
+        local spawnY = love.math.random(maxJumpHeight, groundY - 32 * 3)
+
+        local newCoin = {
+            x = player.x + love.math.random(400, 900),
+            y = spawnY,
+            anim = coin.anim:clone()
+        }
+        table.insert(coin.coins, newCoin)
+        coin.spawnTimer = 0
     end
 
+    --Update and collision for coins
+    for i = #coin.coins, 1, -1 do
+        local c = coin.coins[i]
+        c.anim:update(dt)
+
+        --Remove coin if far behind camera
+        if c.x < player.x - 500 then
+            table.remove(coin.coins, i)
+        --Player collects coin
+        elseif checkCollision(player.x, player.y, player.width * 3, player.height * 3,
+                            c.x, c.y, 32, 32) then
+            
+            score = score + 10 
+            table.remove(coin.coins, i)
+        end
+    end
 
     --Update firespell projectiles
     for i = #firespell.projectiles, 1, -1 do
@@ -511,7 +546,7 @@ function love.update(dt)
         spell.x = spell.x + firespell.speed * dt * spell.dir
         spell.anim:update(dt)
 
-        -- Check collision with bombs
+        --Check collision with bombs
         if bomb.active and checkCollision(spell.x, spell.y, 48, 48,
             bomb.x, bomb.y, bomb.width, bomb.height) then
         
@@ -723,6 +758,11 @@ function love.draw()
         spell.anim:draw(firespell.sheet, spell.x, spell.y, 0, s * spell.dir, s)
     end
 
+    --Draw coins
+    for _, c in ipairs(coin.coins) do
+        c.anim:draw(coin.sheet, c.x, c.y, 0, 2, 2)
+    end
+
     --Fire aura while powered
     if player.fireMode then
         love.graphics.setColor(1, 0.3, 0, 0.25)
@@ -732,14 +772,15 @@ function love.draw()
 
     love.graphics.pop()
 
-    --Draw distance
+    --Draw distance and score
     if gameState == "playing" then
         love.graphics.setFont(font)
         love.graphics.setColor(1, 1, 1)
         love.graphics.print("Distance: " .. distance .. " m", 20, 20)
+        love.graphics.print("Score: " .. score, 20, 50)
         -- small hint when powered
         if player.fireMode then
-            love.graphics.print("Fire Mode: F to shoot (" .. math.ceil(player.fireTimer) .. "s)", 20, 50)
+            love.graphics.print("Fire Mode: F to shoot (" .. math.ceil(player.fireTimer) .. "s)", 20, 80)
         end
     end
 
