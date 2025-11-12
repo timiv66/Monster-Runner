@@ -24,6 +24,7 @@ function love.load()
             idle = 'sprites/Pink_Monster_Idle_4.png',
             deathSheet = "sprites/Pink_Monster_Death_8.png",
             hurt = 'sprites/Pink_Monster_Hurt_4.png',
+            throw = 'sprites/Pink_Monster_Throw_4.png', 
             image = love.graphics.newImage("sprites/Pink_Monster.png")
         },
         {
@@ -33,6 +34,7 @@ function love.load()
             idle = 'sprites/Owlet_Monster_Idle_4.png',
             deathSheet = "sprites/Owlet_Monster_Death_8.png",
             hurt = 'sprites/Owlet_Monster_Hurt_4.png',
+            throw = 'sprites/Owlet_Monster_Throw_4.png',
             image = love.graphics.newImage("sprites/Owlet_Monster.png")
         },
         {
@@ -42,6 +44,7 @@ function love.load()
             idle = 'sprites/Dude_Monster_Idle_4.png',
             deathSheet = "sprites/Dude_Monster_Death_8.png",
             hurt = 'sprites/Dude_Monster_Hurt_4.png',
+            throw = 'sprites/Dude_Monster_Throw_4.png',  
             image = love.graphics.newImage("sprites/Dude_Monster.png")
         }
     }
@@ -72,7 +75,10 @@ function love.load()
         deathTimer = 0,
         fadeAlpha = 0,
         isHurt = false,
-        hurtTimer = 0
+        hurtTimer = 0,
+        isThrowing = false,
+        fireMode = false,
+        fireTimer = 0
     }
 
     --Load default (Pink Monster)
@@ -134,6 +140,30 @@ function love.load()
     shieldSpawnTimer = 0
     shieldSpawnInterval = 10 
     
+    --Fireball Power-up setup (animated collectible)
+    fireball = {
+        sheet = love.graphics.newImage("sprites/fireball_sheet.png"), -- 8 frames x 48x48
+        x = -100,
+        y = groundY - 48 * 3,
+        width = 48,
+        height = 48,
+        active = false,
+        collected = false
+    }
+    local fireballGrid = anim8.newGrid(48, 48, fireball.sheet:getWidth(), fireball.sheet:getHeight())
+    fireball.anim = anim8.newAnimation(fireballGrid('1-8', 1), 0.08)
+    fireballSpawnTimer = 0
+    fireballSpawnInterval = 6  -- seconds
+
+    --Firespell projectile setup (animated shots)
+    firespell = {
+        sheet = love.graphics.newImage("sprites/firespell_sheet.png"), 
+        projectiles = {},
+        speed = 600
+    }
+    local firespellGrid = anim8.newGrid(32, 32, firespell.sheet:getWidth(), firespell.sheet:getHeight())
+    firespell.anim = anim8.newAnimation(firespellGrid('1-8', 1), 0.08)
+    
     --Pause Menu Buttons
     pauseButtons = {
         newGame = love.graphics.newImage("sprites/New Game  col_Button.png"),
@@ -160,18 +190,21 @@ function loadSelectedCharacter()
     player.jumpSheet = love.graphics.newImage(char.jump)
     player.idleSheet = love.graphics.newImage(char.idle)
     player.deathSheet = love.graphics.newImage(char.deathSheet)
+    player.throwSheet = love.graphics.newImage(char.throw)
     player.hurtSheet = love.graphics.newImage(char.hurt)
 
     player.runGrid  = anim8.newGrid(32, 32, player.runSheet:getWidth(),  player.runSheet:getHeight())
     player.jumpGrid = anim8.newGrid(32, 32, player.jumpSheet:getWidth(), player.jumpSheet:getHeight())
     player.idleGrid = anim8.newGrid(32, 32, player.idleSheet:getWidth(), player.idleSheet:getHeight())
     player.deathGrid = anim8.newGrid(32, 32, player.deathSheet:getWidth(), player.deathSheet:getHeight())
+    player.throwGrid  = anim8.newGrid(32, 32, player.throwSheet:getWidth(), player.throwSheet:getHeight())
     player.hurtGrid = anim8.newGrid(32, 32, player.hurtSheet:getWidth(), player.hurtSheet:getHeight())
 
     player.runAnim  = anim8.newAnimation(player.runGrid('1-6', 1), 0.1)
     player.jumpAnim = anim8.newAnimation(player.jumpGrid('1-8', 1), 0.08)
     player.idleAnim = anim8.newAnimation(player.idleGrid('1-4', 1), 0.25)
     player.deathAnim = anim8.newAnimation(player.deathGrid('1-8', 1), 0.08)
+    player.throwAnim = anim8.newAnimation(player.throwGrid('1-4', 1), 0.08, 'pauseAtEnd')
     player.hurtAnim = anim8.newAnimation(player.hurtGrid('1-4', 1), 0.1)
 
     player.currentAnim = player.idleAnim
@@ -252,12 +285,12 @@ function love.update(dt)
         player.y = groundY - player.height * 3
         player.yVelocity = 0
         player.onGround = true
-        if not player.isHurt then
+        if not player.isHurt and not player.isThrowing then
             player.currentAnim = isMoving and player.runAnim or player.idleAnim
         end
     else
         player.onGround = false
-        if not player.isHurt then
+        if not player.isHurt and not player.isThrowing then
             player.currentAnim = player.jumpAnim
         end
     end
@@ -297,7 +330,7 @@ function love.update(dt)
         if not shield.collected then
             bomb.active = false
 
-            -- Trigger explosion
+            --Trigger explosion
             explosion.active = true
             explosion.x = bomb.x - 64
             explosion.y = bomb.y - 64
@@ -351,6 +384,29 @@ function love.update(dt)
         end
     end
 
+    --Handle throw animation timing
+    if player.isThrowing then
+        player.throwAnim:update(dt)
+
+        -- If animation is paused 
+        if player.throwAnim.status == "paused" then
+            player.isThrowing = false
+
+            --reset to first frame for next time
+            player.throwAnim:gotoFrame(1)
+
+            --restore correct animation based on state
+            if not player.onGround then
+                player.currentAnim = player.jumpAnim
+            else
+                local moving = love.keyboard.isDown("left") or love.keyboard.isDown("a") or
+                               love.keyboard.isDown("right") or love.keyboard.isDown("d")
+                player.currentAnim = moving and player.runAnim or player.idleAnim
+            end
+        end
+    end
+
+
     --Gorgon chases player
     if enemy.alive then
         if enemy.x < player.x then
@@ -371,24 +427,98 @@ function love.update(dt)
 
     distance = math.floor(player.x / 10)
 
-    --Collision detection
+    --Gorgon always kills player on contact
     local playerScale = 3
     local enemyScale = 1.5
     if not player.isDead and
-       checkCollision(player.x, player.y, player.width * playerScale, player.height * playerScale,
-                      enemy.x, enemy.y, enemy.width * enemyScale, enemy.height * enemyScale) then
-        if shield.collected then
-            -- consume shield on contact, prevent death once
-            shield.collected = false
-            -- small knockback for feedback
-            enemy.x = enemy.x - (enemy.flip and -60 or 60)
-            camera.shake = 6
-        else
-            player.isDead = true
-            player.deathTimer = 0
-            player.deathAnim:gotoFrame(1)
-            player.fadeAlpha = 0
-            camera.shake = 10 
+        checkCollision(player.x, player.y, player.width * playerScale, player.height * playerScale,
+                  enemy.x, enemy.y, enemy.width * enemyScale, enemy.height * enemyScale) then
+
+        
+        player.isDead = true
+        player.deathTimer = 0
+        player.deathAnim:gotoFrame(1)
+        player.fadeAlpha = 0
+        camera.shake = 10
+    end
+
+    --Fireball spawn
+    fireballSpawnTimer = fireballSpawnTimer + dt
+    if fireballSpawnTimer >= fireballSpawnInterval and not fireball.active then
+        fireball.x = player.x + love.math.random(400, 900)
+    
+        local minY = groundY - fireball.height * 3.5
+        local maxY = groundY - fireball.height * 2.5
+        fireball.y = love.math.random(minY, maxY)
+
+        fireball.active = true
+        fireball.collected = false       
+        fireballSpawnTimer = 0
+        fireballSpawnInterval = love.math.random(4, 8)  
+    end
+
+    --Fireball pickup
+    if fireball.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
+                                      fireball.x, fireball.y, fireball.width, fireball.height) then
+        fireball.active = false
+        fireball.collected = true
+        player.fireMode = true           
+        player.fireTimer = 10              
+    end
+
+    --Fireball timer countdown
+    if player.fireMode then
+        player.fireTimer = player.fireTimer - dt
+        if player.fireTimer <= 0 then
+            player.fireMode = false
+        end
+    end
+    fireball.anim:update(dt)
+
+    if fireball.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
+        fireball.x, fireball.y, fireball.width, fireball.height) then
+        fireball.active = false
+        fireball.collected = true
+        player.fireMode = true
+        player.fireTimer = 10 
+    end
+
+
+    --Update firespell projectiles
+    for i = #firespell.projectiles, 1, -1 do
+        local spell = firespell.projectiles[i]
+        spell.x = spell.x + firespell.speed * dt * spell.dir
+        spell.anim:update(dt)
+
+        -- Check collision with bombs
+        if bomb.active and checkCollision(spell.x, spell.y, 48, 48,
+            bomb.x, bomb.y, bomb.width, bomb.height) then
+        
+            --Destroy bomb with explosion
+            bomb.active = false
+            explosion.active = true
+            explosion.x = bomb.x - 64
+            explosion.y = bomb.y - 64
+            explosion.anim:gotoFrame(1)
+            explosion.anim:resume()
+
+            --Remove the spell projectile
+            table.remove(firespell.projectiles, i)
+
+        --Check collision with Gorgon
+        elseif enemy.alive and checkCollision(spell.x, spell.y, 48, 48,
+            enemy.x, enemy.y, enemy.width * enemyScale, enemy.height * enemyScale) then
+            
+            camera.shake = 4
+            explosion.active = true
+            explosion.x = spell.x - 32
+            explosion.y = spell.y - 32
+            explosion.anim:gotoFrame(1)
+            explosion.anim:resume()
+            table.remove(firespell.projectiles, i)
+
+        elseif spell.x < camera.x - 200 or spell.x > camera.x + love.graphics.getWidth() + 200 then
+            table.remove(firespell.projectiles, i)
         end
     end
 
@@ -468,6 +598,7 @@ function love.draw()
         love.graphics.printf("ESC to go back", 0, 600, love.graphics.getWidth(), "center")
         return
     end   
+
     love.graphics.push()
     
     --Camera shake effect
@@ -503,6 +634,8 @@ function love.draw()
             sheet = player.jumpSheet
         elseif player.currentAnim == player.hurtAnim then
             sheet = player.hurtSheet
+        elseif player.currentAnim == player.throwAnim then
+            sheet = player.throwSheet
         end
         if player.flip then
             player.currentAnim:draw(sheet, player.x + player.width * scale, player.y, 0, -scale, scale)
@@ -513,10 +646,12 @@ function love.draw()
 
     --Draw enemy
     local enemyScale = 1.5
-    if enemy.flip then
-        enemy.anim:draw(enemy.sheet, enemy.x + enemy.width * enemyScale, enemy.y, 0, -enemyScale, enemyScale)
-    else
-        enemy.anim:draw(enemy.sheet, enemy.x, enemy.y, 0, enemyScale, enemyScale)
+    if enemy.alive then
+        if enemy.flip then
+            enemy.anim:draw(enemy.sheet, enemy.x + enemy.width * enemyScale, enemy.y, 0, -enemyScale, enemyScale)
+        else
+            enemy.anim:draw(enemy.sheet, enemy.x, enemy.y, 0, enemyScale, enemyScale)
+        end
     end
 
     --Draw bomb
@@ -541,6 +676,24 @@ function love.draw()
         love.graphics.setColor(1, 1, 1)
     end
 
+    --Draw fireball 
+    if fireball.active then
+        fireball.anim:draw(fireball.sheet, fireball.x, fireball.y, 0, 2, 2)
+    end
+
+    --Draw firespell
+    for _, spell in ipairs(firespell.projectiles) do
+        local s = 2.5
+        spell.anim:draw(firespell.sheet, spell.x, spell.y, 0, s * spell.dir, s)
+    end
+
+    --Fire aura while powered
+    if player.fireMode then
+        love.graphics.setColor(1, 0.3, 0, 0.25)
+        love.graphics.circle("fill", player.x + player.width * 1.5, player.y + player.height * 1.5, 65)
+        love.graphics.setColor(1, 1, 1)
+    end
+
     love.graphics.pop()
 
     --Draw distance
@@ -548,6 +701,10 @@ function love.draw()
         love.graphics.setFont(font)
         love.graphics.setColor(1, 1, 1)
         love.graphics.print("Distance: " .. distance .. " m", 20, 20)
+        -- small hint when powered
+        if player.fireMode then
+            love.graphics.print("Fire Mode: F to shoot (" .. math.ceil(player.fireTimer) .. "s)", 20, 50)
+        end
     end
 
     --Pause Menu
@@ -646,11 +803,32 @@ function love.keypressed(key)
             return
         end
 
+        --Jumping 
         if key == "space" and player.onGround and not player.isDead then
             player.yVelocity = player.jumpForce
             player.onGround = false
             player.currentAnim = player.jumpAnim
             player.jumpAnim:gotoFrame(1)
+        end
+
+        --Shoot firespell while in fire mode
+        if key == "f" and player.fireMode and not player.isDead and not player.isThrowing then
+            player.isThrowing = true
+            player.throwAnim:resume()
+            player.throwAnim:gotoFrame(1)
+            player.currentAnim = player.throwAnim
+
+            local spellDir = player.flip and -1 or 1
+            local playerScale = 3
+            local centerX = player.x + (player.width * playerScale) / 2
+            local centerY = player.y + (player.height * playerScale) / 2
+
+            table.insert(firespell.projectiles, {
+                x = centerX - 24,
+                y = centerY - 24,
+                dir = spellDir,
+                anim = firespell.anim:clone()
+            })
         end
 
     elseif gameState == "gameover" then
