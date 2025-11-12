@@ -6,7 +6,8 @@ function love.load()
 
     --Camera and world
     camera = { x = 0, y = 0, shake = 0 }
-    groundY = 500
+    tileSize = 48
+    groundY = 510
 
     --Custom Fonts
     fonts = {
@@ -14,6 +15,17 @@ function love.load()
         subtitle = love.graphics.newFont("fonts/MonsterTitle.ttf", 28),
         character_select = love.graphics.newFont("fonts/MonsterTitle.ttf", 36)
     }
+
+    --Load ground tiles
+    groundTiles = {
+        topLeft  = love.graphics.newImage("sprites/tile28.png"),
+        topMid   = love.graphics.newImage("sprites/tile29.png"),
+        bottom   = love.graphics.newImage("sprites/tile11.png")
+    }
+
+    tileSize = 48
+    groundRows = 3     
+    groundCols = math.ceil(love.graphics.getWidth() / tileSize) + 2
 
     --Character selection setup
     characters = {
@@ -176,7 +188,7 @@ function love.load()
         options = {"Resume", "New Game", "Quit"}
     }
     
-    -- Game state management
+    --Game state management
     gameState = "menu" 
     blinkTimer = 0
     blinkVisible = true
@@ -454,16 +466,25 @@ function love.update(dt)
         fireball.active = true
         fireball.collected = false       
         fireballSpawnTimer = 0
-        fireballSpawnInterval = love.math.random(4, 8)  
+        fireballSpawnInterval = math.random(4, 8) - math.min(distance / 1000, 3)
     end
+
+    --Fireball animation
+    fireball.anim:update(dt)
 
     --Fireball pickup
     if fireball.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
-                                      fireball.x, fireball.y, fireball.width, fireball.height) then
+        fireball.x, fireball.y, fireball.width, fireball.height) then
         fireball.active = false
         fireball.collected = true
-        player.fireMode = true           
-        player.fireTimer = 10              
+        player.fireMode = true
+        player.fireTimer = 10 
+    end
+
+    --Fireball cleanup 
+    if fireball.active and fireball.x < player.x - 500 then
+        fireball.active = false
+        fireball.collected = false
     end
 
     --Fireball timer countdown
@@ -614,9 +635,24 @@ function love.draw()
         love.graphics.draw(background, i * bgWidth, 0)
     end
 
-    love.graphics.setColor(0.3, 0.8, 0.3)
-    love.graphics.rectangle("fill", camera.x - 1000, groundY, love.graphics.getWidth() + 2000, 100)
-    love.graphics.setColor(1, 1, 1)
+    --Draw tiled ground
+    local startCol = math.floor(camera.x / tileSize)
+    local endCol = startCol + groundCols
+
+    for i = startCol, endCol do
+        local x = i * tileSize
+        local yTop = groundY               
+
+        --draw grass on top
+        local tile = (i == startCol) and groundTiles.topLeft or groundTiles.topMid
+        love.graphics.draw(tile, x, yTop, 0, 1, 1)
+
+        --draw filler dirt below it
+        for r = 1, groundRows - 1 do
+            love.graphics.draw(groundTiles.bottom, x, yTop + (r * tileSize))
+        end
+    end
+
 
     --Draw player
     local scale = 3
