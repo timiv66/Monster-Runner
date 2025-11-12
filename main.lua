@@ -1,3 +1,9 @@
+-- Load background music
+gameMusic = love.audio.newSource("audio/game_music.ogg", "stream")
+gameMusic:setLooping(true)
+gameMusic:setVolume(0.7)  -- volume from 0.0 to 1.0
+gameMusic:play()
+
 function love.load()
     anim8 = require 'libraries/anim8'
 
@@ -6,6 +12,7 @@ function love.load()
 
     --Camera and world
     camera = { x = 0, y = 0, shake = 0 }
+    tileSize = 48
     groundY = 500
 
     --Custom Fonts
@@ -14,6 +21,35 @@ function love.load()
         subtitle = love.graphics.newFont("fonts/MonsterTitle.ttf", 28),
         character_select = love.graphics.newFont("fonts/MonsterTitle.ttf", 36)
     }
+
+    --Load ground tiles
+    groundTiles = {
+        topLeft  = love.graphics.newImage("sprites/tile28.png"),
+        topMid   = love.graphics.newImage("sprites/tile29.png"),
+        bottom   = love.graphics.newImage("sprites/tile11.png")
+    }
+
+    tileSize = 48
+    groundRows = 3     
+    groundCols = math.ceil(love.graphics.getWidth() / tileSize) + 2
+
+
+    
+
+    -- Load explosion sound effect
+    explosionSound = love.audio.newSource("audio/explosion.ogg", "static")
+    explosionSound:setVolume(0.9) -- optional: adjust loudness (0.0–1.0)
+
+    -- Load hurt (damage) sound
+    hurtSound = love.audio.newSource("audio/damage.ogg", "static")
+    hurtSound:setVolume(0.8)
+
+    -- Load UI selection sound
+    selectSound = love.audio.newSource("audio/laser.ogg", "static")
+    selectSound:setVolume(0.8)
+
+    coinSound = love.audio.newSource("audio/coin_sound.mp3", "static")
+    coinSound:setVolume(0.9) 
 
     --Character selection setup
     characters = {
@@ -141,7 +177,7 @@ function love.load()
     shieldSpawnTimer = 0
     shieldSpawnInterval = 10 
     
-    --Fireball Power-up setup (animated collectible)
+    --Fireball Power-up setup
     fireball = {
         sheet = love.graphics.newImage("sprites/fireball_sheet.png"), -- 8 frames x 48x48
         x = -100,
@@ -342,6 +378,14 @@ function love.update(dt)
         if not shield.collected then
             bomb.active = false
 
+            --PLAY EXPLOSION SOUND 
+            explosionSound:stop() 
+            explosionSound:play()
+
+            --PLAY HURT SOUND
+            hurtSound:stop()
+            hurtSound:play()
+
             --Trigger explosion
             explosion.active = true
             explosion.x = bomb.x - 64
@@ -446,7 +490,8 @@ function love.update(dt)
         checkCollision(player.x, player.y, player.width * playerScale, player.height * playerScale,
                   enemy.x, enemy.y, enemy.width * enemyScale, enemy.height * enemyScale) then
 
-        
+        hurtSound:stop()
+        hurtSound:play()
         player.isDead = true
         player.deathTimer = 0
         player.deathAnim:gotoFrame(1)
@@ -516,7 +561,9 @@ function love.update(dt)
         --Player collects coin
         elseif checkCollision(player.x, player.y, player.width * 3, player.height * 3,
                             c.x, c.y, 32, 32) then
-            
+            coinSound:stop()   
+            coinSound:play()
+
             score = score + 10 
             table.remove(coin.coins, i)
         end
@@ -531,7 +578,10 @@ function love.update(dt)
         --Check collision with bombs
         if bomb.active and checkCollision(spell.x, spell.y, 48, 48,
             bomb.x, bomb.y, bomb.width, bomb.height) then
-        
+
+            explosionSound:stop()
+            explosionSound:play()
+
             --Destroy bomb with explosion
             bomb.active = false
             explosion.active = true
@@ -652,9 +702,24 @@ function love.draw()
         love.graphics.draw(background, i * bgWidth, 0)
     end
 
-    love.graphics.setColor(0.3, 0.8, 0.3)
-    love.graphics.rectangle("fill", camera.x - 1000, groundY, love.graphics.getWidth() + 2000, 100)
-    love.graphics.setColor(1, 1, 1)
+    --Draw tiled ground
+    local startCol = math.floor(camera.x / tileSize)
+    local endCol = startCol + groundCols
+
+    for i = startCol, endCol do
+        local x = i * tileSize
+        local yTop = groundY               
+
+        --draw grass on top
+        local tile = (i == startCol) and groundTiles.topLeft or groundTiles.topMid
+        love.graphics.draw(tile, x, yTop, 0, 1, 1)
+
+        --draw filler dirt below it
+        for r = 1, groundRows - 1 do
+            love.graphics.draw(groundTiles.bottom, x, yTop + (r * tileSize))
+        end
+    end
+
 
     --Draw player
     local scale = 3
