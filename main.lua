@@ -19,7 +19,10 @@ function love.load()
     fonts = {
         title = love.graphics.newFont("fonts/MonsterTitle.ttf", 72),
         subtitle = love.graphics.newFont("fonts/MonsterTitle.ttf", 28),
-        character_select = love.graphics.newFont("fonts/MonsterTitle.ttf", 36)
+        character_select = love.graphics.newFont("fonts/MonsterTitle.ttf", 36),
+        countdown = love.graphics.newFont("fonts/Ghoulish.ttf",96),
+        stage = love.graphics.newFont("fonts/MonsterTitle.ttf", 40),
+        numbers = love.graphics.newFont("fonts/Ghoulish.ttf", 36)
     }
 
     --Load ground tiles
@@ -152,7 +155,9 @@ function love.load()
     --Game variables
     font = love.graphics.newFont(24)
     distance = 0
+    distanceOffset = 0
     camera.x = 0
+    camera.lock = true
     score = 0
 
     --Bomb setup
@@ -277,6 +282,14 @@ function love.load()
     blinkTimer = 0
     blinkVisible = true
 
+    --Countdown
+    countdown = {
+        active = false,
+        timer = 0,
+        number = 3,
+        justEnded = false
+    }
+
     --Stage Messages
     stageMessage = ""
     stageMessageAlpha = 0
@@ -323,10 +336,12 @@ end
 function showStageMessage(text)
     stageBanner.text = text
     stageBanner.alpha = 0        
-    stageBanner.y = -100         
+    stageBanner.y = -100
+    stageBanner.targetY = 150         
     stageBanner.timer = 3        
     stageBanner.scale = 0.5     
     stageBanner.active = true      
+    stageBanner.animDone = false
 end
 
 
@@ -360,6 +375,35 @@ function love.update(dt)
         return
     end
 
+    -- Handle countdown before gameplay starts
+    if countdown.active then
+        countdown.timer = countdown.timer + dt
+
+        if countdown.timer >= 1.0 then
+            countdown.timer = 0
+            countdown.number = countdown.number - 1
+
+            if countdown.number < 0 then
+                countdown.active = false
+                countdown.justEnded = true   -- countdown finished
+            end
+        end
+
+        return
+    end
+
+    -- Skip exactly one frame AFTER countdown finishes
+    if countdown.justEnded then
+        countdown.justEnded = false
+        camera.lock = true      -- keep camera frozen this frame
+        return
+    end
+
+    -- FINAL STEP: unlock camera on the FIRST real gameplay frame
+    if camera.lock then
+        camera.lock = false
+    end
+
     --Freeze gameplay while paused
     if pauseMenu.active then
         return
@@ -374,9 +418,12 @@ function love.update(dt)
             stageBanner.alpha = math.min(1, stageBanner.alpha + dt * 2)
         end
 
-        -- Slide-down into view
-        if stageBanner.y < 60 then
+        -- Slide-down animation toward targetY
+        if stageBanner.y < stageBanner.targetY then
             stageBanner.y = stageBanner.y + dt * 200
+            if stageBanner.y > stageBanner.targetY then
+                stageBanner.y = stageBanner.targetY
+            end
         end
 
         -- Pop animation (scale grows slightly then settles)
@@ -610,10 +657,13 @@ function love.update(dt)
         enemy.x = player.x - love.math.random(500, 800)
     end
 
-    camera.x = player.x - love.graphics.getWidth() / 2
-    if camera.x < 0 then camera.x = 0 end
+    if not camera.lock then
+        camera.x = player.x - love.graphics.getWidth() / 2
+        if camera.x < 0 then camera.x = 0 end
+    end
 
-    distance = math.floor(player.x / 10)
+    -- NEW: Distance starts at 0
+    distance = math.floor((player.x - distanceOffset) / 10)
 
     --Stage progression logic
     if distance >= 3000 and player.stage < 3 then
@@ -653,7 +703,6 @@ function love.update(dt)
         enemy.speed = stageSpeeds[enemy.stage] * 0.99
     end  
     
-
 
     --Gorgon always kills player on contact
     local playerScale = 3
@@ -1104,53 +1153,90 @@ function love.draw()
     if gameState == "playing" then
         love.graphics.setFont(font)
         love.graphics.setColor(1, 1, 1)
-        love.graphics.print("Distance: " .. distance .. " m", 20, 20)
-        love.graphics.print("Score: " .. score, 20, 50)
-        --Stage reached banner 
+
+        -- Draw Stage Banner
         if stageBanner.active then
-            love.graphics.setFont(fonts.subtitle)
+            -- Save current font
+            local previousFont = love.graphics.getFont()
+
+            love.graphics.setFont(fonts.stage)
             love.graphics.setColor(1, 1, 0, stageBanner.alpha)
 
-            local bannerW = love.graphics.getWidth()
             local text = stageBanner.text
+            local textW = fonts.stage:getWidth(text)
+            local textH = fonts.stage:getHeight()
 
             love.graphics.push()
-            love.graphics.translate(bannerW / 2, stageBanner.y)
+            love.graphics.translate(love.graphics.getWidth() / 2, stageBanner.y)
             love.graphics.scale(stageBanner.scale, stageBanner.scale)
-            love.graphics.printf(text, -bannerW/2, 0, bannerW, "center")
+            love.graphics.printf(text, -textW / 2, -textH / 2, textW, "center")
             love.graphics.pop()
 
             love.graphics.setColor(1, 1, 1)
+
+            -- RESTORE original font
+            love.graphics.setFont(previousFont)
         end
-        --small hint when powered
-        if player.fireMode then
-            love.graphics.print("Fire Mode: F to shoot (" .. math.ceil(player.fireTimer) .. "s)", 20, 80)
+        
+        -- NEW: Show countdown overlay on top of the game
+        if countdown.active then
+            love.graphics.setColor(0, 0, 0, 0.5)
+            love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
+            
+            love.graphics.setFont(fonts.countdown)
+            love.graphics.setColor(1, 1, 0.3)
+            
+            if countdown.number > 0 then
+                love.graphics.printf(tostring(countdown.number), 0, 250, love.graphics.getWidth(), "center")
+            else
+                love.graphics.setColor(0.4, 1, 0.4)
+                love.graphics.printf("GO", 0, 250, love.graphics.getWidth(), "center")
+            end
+
+            love.graphics.setColor(1, 1, 1)
+            love.graphics.setFont(font)
+        else
+           -- Draw Distance and Score when Countdown is done
+            love.graphics.print("Distance: " .. distance .. " m", 20, 20)
+            love.graphics.print("Score: " .. score, 20, 50)
+
+            -- small hint when powered
+            if player.fireMode then
+                love.graphics.print("Fire Mode: F to shoot (" .. math.ceil(player.fireTimer) .. "s)", 20, 80)
+            end
+                    -- NEW: Hint to pause
+        local hint = "Press ESC to pause"
+        local hintW = font:getWidth(hint)
+        local margin = 20
+        love.graphics.print(hint,
+            love.graphics.getWidth() - hintW - margin,
+            margin)
         end
-    end
+    
+        -- Pause Menu 
+        if pauseMenu.active then
+            love.graphics.setColor(0, 0, 0, 0.6)
+            love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
+            love.graphics.setColor(1, 1, 1)
 
-    --Pause Menu
-    if pauseMenu.active then
-        love.graphics.setColor(0, 0, 0, 0.6)
-        love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
-        love.graphics.setColor(1, 1, 1)
+            local screenWidth, screenHeight = love.graphics.getWidth(), love.graphics.getHeight()
+            local buttons = { pauseButtons.resume, pauseButtons.newGame, pauseButtons.quit }
+            local buttonSpacing = 140
 
-        local screenWidth, screenHeight = love.graphics.getWidth(), love.graphics.getHeight()
-        local buttons = { pauseButtons.resume, pauseButtons.newGame, pauseButtons.quit }
-        local buttonSpacing = 140
+            local totalHeight = (#buttons - 1) * buttonSpacing
+            local startY = (screenHeight - totalHeight) / 2 - 75
 
-        local totalHeight = (#buttons - 1) * buttonSpacing
-        local startY = (screenHeight - totalHeight) / 2 - 75
-
-        for i, btn in ipairs(buttons) do
-            local y = startY + (i - 1) * buttonSpacing
-            local scaleBtn = (i == pauseMenu.selected) and 0.65 or 0.55
-            local btnWidth = btn:getWidth() * scaleBtn
-            local btnHeight = btn:getHeight() * scaleBtn
-            local x = (screenWidth - btnWidth) / 2
-            love.graphics.setColor(1, 1, 1, (i == pauseMenu.selected) and 1 or 0.7)
-            love.graphics.draw(btn, x, y, 0, scaleBtn, scaleBtn)
+            for i, btn in ipairs(buttons) do
+                local y = startY + (i - 1) * buttonSpacing
+                local scaleBtn = (i == pauseMenu.selected) and 0.65 or 0.55
+                local btnWidth = btn:getWidth() * scaleBtn
+                local btnHeight = btn:getHeight() * scaleBtn
+                local x = (screenWidth - btnWidth) / 2
+                love.graphics.setColor(1, 1, 1, (i == pauseMenu.selected) and 1 or 0.7)
+                love.graphics.draw(btn, x, y, 0, scaleBtn, scaleBtn)
+            end
+            love.graphics.setColor(1, 1, 1)
         end
-        love.graphics.setColor(1, 1, 1)
     end
 
     --Draw fade effect on death
@@ -1162,16 +1248,83 @@ function love.draw()
 
     --Game Over Screen
     if gameState == "gameover" then
-        love.graphics.setColor(0, 0, 0, 0.6)
-        love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
+        local w, h = love.graphics.getWidth(), love.graphics.getHeight()
+        local offsetY = -50  -- move everything up
+    
+        love.graphics.setColor(0, 0, 0, 0.75)
+        love.graphics.rectangle("fill", 0, 0, w, h)
+
+        --NEW: GAME OVER title
+        love.graphics.setFont(fonts.title)
+        love.graphics.setColor(1, 0.3, 0.3)
+        love.graphics.printf("GAME OVER", 0, h * 0.2 + offsetY, w, "center")
+
+        --NEW: Score row
+        local scoreLabel = "Score "
+        local scoreValue = tostring(score)
+
+        local labelFont = fonts.subtitle
+        local numberFont = fonts.numbers
+
+        local labelWidth = labelFont:getWidth(scoreLabel)
+        local numberWidth = numberFont:getWidth(scoreValue)
+
+        local totalWidth = labelWidth + numberWidth
+        local scoreY = h * 0.45 + offsetY
+        local startX = (w - totalWidth) / 2
+        local numOffsetY  = -3   -- negative = move numbers up, positive = down
+            
+        love.graphics.setFont(labelFont)
         love.graphics.setColor(1, 1, 1)
-        love.graphics.printf("GAME OVER\nPress R to Return to Menu\nDistance: " .. distance .. " m",
-            0, 200, love.graphics.getWidth(), "center")
+        love.graphics.print(scoreLabel, startX, scoreY)
+
+        love.graphics.setFont(numberFont)
+        love.graphics.setColor(1, 1, 0.5)
+        love.graphics.print(scoreValue, startX + labelWidth, scoreY + numOffsetY)
+
+        -- NEW: Distance row
+        local distLabelLeft = "Distance "
+        local distNumber = tostring(distance)
+        local distLabelRight = " m"
+
+        local leftWidth = labelFont:getWidth(distLabelLeft)
+        local numberWidth2 = numberFont:getWidth(distNumber)
+        local rightWidth = labelFont:getWidth(distLabelRight)
+
+        local totalWidth2 = leftWidth + numberWidth2 + rightWidth
+        local distY = h * 0.53 + offsetY
+        local startX2 = (w - totalWidth2) / 2
+
+        love.graphics.setFont(labelFont)
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.print(distLabelLeft, startX2, distY)
+
+        love.graphics.setFont(numberFont)
+        love.graphics.setColor(1, 1, 0.5)
+        love.graphics.print(distNumber, startX2 + leftWidth, distY + numOffsetY)
+
+        love.graphics.setFont(labelFont)
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.print(distLabelRight, startX2 + leftWidth + numberWidth2, distY)
+
+        -- Press R
+        love.graphics.setFont(fonts.subtitle)
+        love.graphics.setColor(0.8, 0.8, 0.8)
+        love.graphics.printf("Press R to Return to Menu", 0, h * 0.70 + offsetY, w, "center")
+
+        -- NEW: Press Enter 
+        love.graphics.setFont(fonts.subtitle)
+        love.graphics.setColor(0.8, 0.8, 0.8)
+        love.graphics.printf("Press ENTER to Replay",0, h * 0.63 + offsetY, w, "center")
     end
 end
 
 
 function love.keypressed(key)
+
+    -------------------------------------------------
+    -- MENU
+    -------------------------------------------------
     if gameState == "menu" then
         if key == "return" or key == "space" then
             gameState = "character_select"
@@ -1179,52 +1332,97 @@ function love.keypressed(key)
             love.event.quit()
         end
 
+
+    -------------------------------------------------
+    -- CHARACTER SELECT
+    -------------------------------------------------
     elseif gameState == "character_select" then
-        --Navigate character selection
+        
         if key == "right" then
             selectedCharacter = selectedCharacter + 1
-            if selectedCharacter > #characters then selectedCharacter = 1 end
+            if selectedCharacter > #characters then 
+                selectedCharacter = 1 
+            end
+        
         elseif key == "left" then
             selectedCharacter = selectedCharacter - 1
-            if selectedCharacter < 1 then selectedCharacter = #characters end
+            if selectedCharacter < 1 then 
+                selectedCharacter = #characters 
+            end
+        
         elseif key == "return" or key == "space" then
             loadSelectedCharacter()
+
+            -- NEW: Start countdown
+            countdown.active = true
+            countdown.timer  = 0
+            countdown.number = 3
+
             gameState = "playing"
+            distanceOffset = player.x
+        
         elseif key == "escape" then
             gameState = "menu"
         end
 
+
+    -------------------------------------------------
+    -- PLAYING (including pause)
+    -------------------------------------------------
     elseif gameState == "playing" then
+        
+        -- PAUSE MENU
         if pauseMenu.active then
-            --Navigate pause menu
+            
             if key == "up" then
                 pauseMenu.selected = pauseMenu.selected - 1
-                if pauseMenu.selected < 1 then pauseMenu.selected = #pauseMenu.options end
+                if pauseMenu.selected < 1 then 
+                    pauseMenu.selected = #pauseMenu.options 
+                end
+            
             elseif key == "down" then
                 pauseMenu.selected = pauseMenu.selected + 1
-                if pauseMenu.selected > #pauseMenu.options then pauseMenu.selected = 1 end
+                if pauseMenu.selected > #pauseMenu.options then 
+                    pauseMenu.selected = 1 
+                end
+
             elseif key == "return" or key == "space" then
                 local choice = pauseMenu.options[pauseMenu.selected]
+
                 if choice == "Resume" then
                     pauseMenu.active = false
+
+                    -- NEW: Countdown when resuming
+                    countdown.active = true
+                    countdown.timer  = 0
+                    countdown.number = 3
+                
                 elseif choice == "New Game" then
                     love.load()
                     gameState = "menu"
+                
                 elseif choice == "Quit" then
                     love.event.quit()
                 end
+            
             elseif key == "escape" then
+                -- NEW: Resume with ESC + countdown
                 pauseMenu.active = false
+                countdown.active = true
+                countdown.timer  = 0
+                countdown.number = 3
             end
+
             return
         end
 
+        -- Enter pause
         if key == "escape" then
             pauseMenu.active = true
             return
         end
 
-        --Jumping 
+        -- JUMP
         if key == "space" and player.onGround and not player.isDead then
             player.yVelocity = player.jumpForce
             player.onGround = false
@@ -1232,8 +1430,9 @@ function love.keypressed(key)
             player.jumpAnim:gotoFrame(1)
         end
 
-        --Shoot firespell while in fire mode
+        -- FIRE SPELL
         if key == "f" and player.fireMode and not player.isDead and not player.isThrowing then
+            
             player.isThrowing = true
             player.throwAnim:resume()
             player.throwAnim:gotoFrame(1)
@@ -1252,10 +1451,24 @@ function love.keypressed(key)
             })
         end
 
+
+    -------------------------------------------------
+    -- GAME OVER
+    -------------------------------------------------
     elseif gameState == "gameover" then
+        
         if key == "r" then
             love.load()
             gameState = "menu"
+
+        elseif key == "return" or key == "space" then
+            love.load()
+            gameState = "playing"
+
+            -- NEW: countdown when restarting
+            countdown.active = true
+            countdown.timer  = 0
+            countdown.number = 3
         end
     end
 end
@@ -1266,4 +1479,48 @@ function checkCollision(x1, y1, w1, h1, x2, y2, w2, h2)
            x2 < x1 + w1 and
            y1 < y2 + h2 and
            y2 < y1 + h1
+end
+
+function love.mousepressed(x, y, button)
+
+    -- NEW: Handle clicks when game is paused
+    if button == 1 and gameState == "playing" and pauseMenu.active then
+
+        local screenWidth, screenHeight = love.graphics.getWidth(), love.graphics.getHeight()
+        local buttons = { pauseButtons.resume, pauseButtons.newGame, pauseButtons.quit }
+        local buttonSpacing = 140
+
+        local totalHeight = (#buttons - 1) * buttonSpacing
+        local startY = (screenHeight - totalHeight) / 2 - 75
+
+        for i, img in ipairs(buttons) do
+            
+            local scaleBtn = (i == pauseMenu.selected) and 0.65 or 0.55
+            local btnWidth  = img:getWidth()  * scaleBtn
+            local btnHeight = img:getHeight() * scaleBtn
+
+            local btnX = (screenWidth - btnWidth) / 2
+            local btnY = startY + (i - 1) * buttonSpacing
+
+            -- Click detection
+            if x >= btnX and x <= btnX + btnWidth and
+               y >= btnY and y <= btnY + btnHeight then
+                
+                local choice = pauseMenu.options[i]
+
+                if choice == "Resume" then
+                    pauseMenu.active = false
+
+                elseif choice == "New Game" then
+                    love.load()
+                    gameState = "menu"
+
+                elseif choice == "Quit" then
+                    love.event.quit()
+                end
+
+                break
+            end
+        end
+    end
 end
