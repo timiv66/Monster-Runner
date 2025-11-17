@@ -461,7 +461,7 @@ function love.update(dt)
         local maxJumpHeight = groundY - ((player.jumpForce ^ 2) / (2 * player.gravity)) - player.height * 3
 
         --Random vertical position between ground and max height
-        bomb.y = love.math.random(maxJumpHeight, groundY - bomb.height)
+        bomb.y = love.math.random(maxJumpHeight, groundY - bomb.height * 3)
 
         bomb.active = true
         bombSpawnTimer = 0
@@ -649,7 +649,9 @@ function love.update(dt)
     }
 
     player.speed = stageSpeeds[player.stage] * player.slowMultiplier
-    enemy.speed  = stageSpeeds[enemy.stage] * 0.99   -- slightly slower so player can outrun
+    if enemy.debuffTimer <= 0 then
+        enemy.speed = stageSpeeds[enemy.stage] * 0.99
+    end  
     
 
 
@@ -670,7 +672,7 @@ function love.update(dt)
 
     --Fireball spawn
     fireballSpawnTimer = fireballSpawnTimer + dt
-    if fireballSpawnTimer >= fireballSpawnInterval and not fireball.active then
+    if fireballSpawnTimer >= fireballSpawnInterval and not fireball.collected then
         fireball.x = player.x + love.math.random(400, 900)
     
        -- Calculate player's maximum jump height
@@ -699,6 +701,7 @@ function love.update(dt)
         player.fireTimer = player.fireTimer - dt
         if player.fireTimer <= 0 then
             player.fireMode = false
+            fireball.collected = false
         end
     end
     fireball.anim:update(dt)
@@ -744,7 +747,7 @@ function love.update(dt)
             enemy.speed = enemy.baseSpeed * 0.5
             enemy.scale = enemy.baseScale * 0.6
             enemy.y = groundY - enemy.height * enemy.scale
-            enemy.debuffTimer = 8   -- seconds debuff lasts
+            enemy.debuffTimer = 3   -- seconds debuff lasts
         end
     end
 
@@ -807,9 +810,28 @@ function love.update(dt)
         if enemy.debuffTimer <= 0 then
             enemy.debuffTimer = 0
 
-            --Begin recovery phase instead of instantly restoring speed
-            enemy.recovering = true
-            enemy.recoverySpeed = enemy.speed  -- start recovery from slowed speed
+            -- Enemy lightning debuff timer
+            if enemy.debuffTimer and enemy.debuffTimer > 0 then
+                enemy.debuffTimer = enemy.debuffTimer - dt
+                if enemy.debuffTimer <= 0 then
+                    enemy.debuffTimer = 0
+
+                    -- INSTANT RECOVERY
+                    enemy.speed = enemy.baseSpeed
+                    enemy.scale = enemy.baseScale
+                    enemy.y = groundY - enemy.height * enemy.scale
+                    enemy.recovering = false
+
+                    -- GUARANTEED RETURN ONSCREEN AFTER DEBUFF
+                    local distanceFromPlayer = enemy.x - player.x
+
+                    -- If enemy is too far behind OR too far ahead
+                    if distanceFromPlayer < -600 or distanceFromPlayer > 600 then
+                        -- Teleport Gorgon right behind player (close range)
+                        enemy.x = player.x - love.math.random(250, 400)
+                    end
+                end
+            end
 
             --Restore normal size immediately
             enemy.scale = enemy.baseScale
@@ -855,6 +877,17 @@ function love.update(dt)
 
         elseif spell.x < camera.x - 200 or spell.x > camera.x + love.graphics.getWidth() + 200 then
             table.remove(firespell.projectiles, i)
+        end
+    end
+
+    -- FINAL SAFETY CHECK: ensure Gorgon is on-screen after debuff
+    if enemy.debuffTimer == 0 then
+        local distanceFromPlayer = enemy.x - player.x
+
+        -- If enemy is still too far behind or ahead AFTER all movement
+        if distanceFromPlayer < -600 or distanceFromPlayer > 600 then
+            -- Forced teleport closer behind player
+            enemy.x = player.x - love.math.random(400, 650)
         end
     end
 
