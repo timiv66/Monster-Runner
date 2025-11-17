@@ -33,9 +33,6 @@ function love.load()
     groundRows = 3     
     groundCols = math.ceil(love.graphics.getWidth() / tileSize) + 2
 
-
-    
-
     -- Load explosion sound effect
     explosionSound = love.audio.newSource("audio/explosion.ogg", "static")
     explosionSound:setVolume(0.9) -- optional: adjust loudness (0.0–1.0)
@@ -101,7 +98,15 @@ function love.load()
         y = groundY - 96,
         width = 32,
         height = 32,
-        speed = 350,
+        
+        -- speed + boost control
+        baseSpeed = 350,  -- normal speed
+        speed = 350,  -- current speed used for movement
+        boostTimer = 0,  -- time left on current speed boost
+        boostMultiplier = 1.5,  -- how strong the boost is (1.5x)
+        nextBoostDistance = 1000, -- first distance to trigger a boost (then 2000, 3000)
+        slowMultiplier = 1.0,
+        slowTimer = 0,
         yVelocity = 0,
         jumpForce = -700,
         gravity = 1500,
@@ -127,13 +132,24 @@ function love.load()
         width = 128,
         height = 128,
         speed = 349,
+        baseSpeed = 349,
+        scale = 1.5,
+        baseScale = 1.5,
+        debuffTimer = 0, --how long the lightning debuff lasts
         flip = false,
         alive = true
     }
 
+    enemy.recovering = false      -- is enemy in catch-up mode?
+    enemy.recoverySpeed = 0       -- current temporary speed after debuff
+    enemy.recoveryRate = 80       -- how fast gorgon accelerates
+
     enemy.sheet = love.graphics.newImage('sprites/enemy_run.png')
     enemy.grid = anim8.newGrid(128, 128, enemy.sheet:getWidth(), enemy.sheet:getHeight())
     enemy.anim = anim8.newAnimation(enemy.grid('1-7', 1), 0.1)
+
+    player.stage = 0
+    enemy.stage = 0
 
     --Game variables
     font = love.graphics.newFont(24)
@@ -192,6 +208,41 @@ function love.load()
     fireballSpawnTimer = 0
     fireballSpawnInterval = 6  -- seconds
 
+    --Lightning Potion power-up (animated)
+    lightningPotion = {
+        sheet = love.graphics.newImage("sprites/Lightning Potion-Sheet.png"),
+        x = -100,
+        y = groundY - 256 * 0.35,  -- adjust so it sits above ground
+        width = 256,
+        height = 256,
+        scale = 0.35,
+        active = false
+    }
+
+    -- Potion sheet is 768x768 = 3x3 grid -> 256x256 frames
+    local potionGrid = anim8.newGrid(256, 256, lightningPotion.sheet:getWidth(),lightningPotion.sheet:getHeight())
+    lightningPotion.anim = anim8.newAnimation(potionGrid('1-3', 1, '1-3', 2, '1-3', 3),0.12)  -- speed of the sparkle
+    lightningSpawnTimer = 0
+    lightningSpawnInterval = 12  -- seconds until first spawn
+
+    -- Lightning strike animation (the thin horizontal sheet)
+    lightning = {
+        sheet = love.graphics.newImage("sprites/lightning-strike-Sheet.png"),
+        x = 0,
+        y = 0,
+        active = false,
+        scale = 4,
+        life = 0, --how long it stays visible
+    }
+
+    -- Example: 10 frames across, each 168x102 (change if your frame size differs)
+    local lightningGrid = anim8.newGrid(168, 102, lightning.sheet:getWidth(), lightning.sheet:getHeight())
+    lightning.anim = anim8.newAnimation(lightningGrid('1-10', 1), 0.08, 'pauseAtEnd')
+
+    -- Lightning hit sound
+    lightningSound = love.audio.newSource("audio/lightning-spell-386163.mp3", "static")
+    lightningSound:setVolume(0.8)
+
     --Firespell projectile setup (animated shots)
     firespell = {
         sheet = love.graphics.newImage("sprites/firespell_sheet.png"), 
@@ -228,6 +279,20 @@ function love.load()
     gameState = "menu" 
     blinkTimer = 0
     blinkVisible = true
+
+    --Stage Messages
+    stageMessage = ""
+    stageMessageAlpha = 0
+    stageMessageTimer = 0
+
+    stageBanner = {
+        text = "",
+        alpha = 0,
+        y = -100,          -- start off-screen
+        timer = 0,
+        active = false,
+        scale = 1
+    }
 end
 
 
@@ -258,6 +323,15 @@ function loadSelectedCharacter()
     player.currentAnim = player.idleAnim
 end
 
+function showStageMessage(text)
+    stageBanner.text = text
+    stageBanner.alpha = 0        
+    stageBanner.y = -100         
+    stageBanner.timer = 3        
+    stageBanner.scale = 0.5     
+    stageBanner.active = true      
+end
+
 
 function love.update(dt)
     --Blinking text for menu
@@ -278,6 +352,13 @@ function love.update(dt)
         return
     end
 
+    --Stage message fade-out
+    if stageMessageTimer > 0 then
+        stageMessageTimer = stageMessageTimer - dt
+    else
+        stageMessageAlpha = math.max(0, stageMessageAlpha - dt * 1.5)
+    end
+
     if gameState ~= "playing" then
         return
     end
@@ -285,6 +366,37 @@ function love.update(dt)
     --Freeze gameplay while paused
     if pauseMenu.active then
         return
+    end
+
+    -- Stage Banner Animation
+    if stageBanner.active then
+        stageBanner.timer = stageBanner.timer - dt
+
+        -- Fade in for first 0.5 sec
+        if stageBanner.alpha < 1 and stageBanner.timer > 1.5 then
+            stageBanner.alpha = math.min(1, stageBanner.alpha + dt * 2)
+        end
+
+        -- Slide-down into view
+        if stageBanner.y < 60 then
+            stageBanner.y = stageBanner.y + dt * 200
+        end
+
+        -- Pop animation (scale grows slightly then settles)
+        stageBanner.scale = stageBanner.scale + dt * 2
+        if stageBanner.scale > 1 then
+            stageBanner.scale = 1
+        end
+
+        -- Fade-out near the end
+        if stageBanner.timer < 0.7 then
+            stageBanner.alpha = math.max(0, stageBanner.alpha - dt * 2)
+        end
+
+        -- Remove when done
+        if stageBanner.timer <= 0 then
+            stageBanner.active = false
+        end
     end
 
     --Death animation logic
@@ -393,7 +505,7 @@ function love.update(dt)
             explosion.anim:gotoFrame(1)
             explosion.anim:resume()
 
-            player.speed = player.speed * 0.5
+            player.slowMultiplier = 0.5
             player.slowTimer = 1
             player.isHurt = true
             player.hurtTimer = 0
@@ -425,11 +537,11 @@ function love.update(dt)
     if player.slowTimer then
         player.slowTimer = player.slowTimer - dt
         if player.slowTimer <= 0 then
-            player.speed = 350
-            player.slowTimer = nil
+            player.slowTimer = 0
+            player.slowMultiplier = 1.0
         end
     end
-
+    
     --Handle hurt animation timing
     if player.isHurt then
         player.hurtTimer = player.hurtTimer + dt
@@ -474,6 +586,29 @@ function love.update(dt)
         end
     end
 
+    -- Gorgon recovery logic (accelerate until visible on camera again)
+    if enemy.recovering then
+        local cameraRight = camera.x + love.graphics.getWidth()
+
+        -- Accelerate while still off camera
+        if enemy.x < cameraRight - 150 then
+            enemy.recoverySpeed = enemy.recoverySpeed + enemy.recoveryRate * dt
+
+            -- Cap at normal speed
+            if enemy.recoverySpeed >= enemy.baseSpeed then
+                enemy.recoverySpeed = enemy.baseSpeed
+                enemy.recovering = false
+            end
+
+            enemy.speed = enemy.recoverySpeed
+
+        else
+            -- Gorgon is visible again → stop recovery
+            enemy.recovering = false
+            enemy.speed = enemy.baseSpeed
+        end
+    end
+
     if enemy.x < player.x - 800 then
         enemy.x = player.x - love.math.random(500, 800)
     end
@@ -483,12 +618,49 @@ function love.update(dt)
 
     distance = math.floor(player.x / 10)
 
+    -- PERMANENT STAGE SYSTEM
+    if distance >= 3000 and player.stage < 3 then
+        player.stage = 3
+        enemy.stage = 3
+        showStageMessage("STAGE 3 REACHED!")
+    elseif distance >= 2000 and player.stage < 2 then
+        player.stage = 2
+        enemy.stage = 2
+        showStageMessage("STAGE 2 REACHED!")
+    elseif distance >= 1000 and player.stage < 1 then
+        player.stage = 1
+        enemy.stage = 1
+        showStageMessage("STAGE 1 REACHED!")
+    end
+
+    -- Power-up spawn frequency increases each stage
+    local spawnMultiplier = 1
+    if player.stage == 1 then
+        spawnMultiplier = 1.2
+    elseif player.stage == 2 then
+        spawnMultiplier = 1.5
+    elseif player.stage == 3 then
+        spawnMultiplier = 2.0
+    end
+
+    -- Apply permanent speed increase per stage
+    local stageSpeeds = { 
+        [0] = 350,   -- default
+        [1] = 450,   -- stage 1
+        [2] = 550,   -- stage 2
+        [3] = 650    -- stage 3
+    }
+
+    player.speed = stageSpeeds[player.stage] * player.slowMultiplier
+    enemy.speed  = stageSpeeds[enemy.stage] * 0.99   -- slightly slower so player can outrun
+    
+
+
     --Gorgon always kills player on contact
     local playerScale = 3
-    local enemyScale = 1.5
     if not player.isDead and
         checkCollision(player.x, player.y, player.width * playerScale, player.height * playerScale,
-                  enemy.x, enemy.y, enemy.width * enemyScale, enemy.height * enemyScale) then
+                  enemy.x, enemy.y, enemy.width * enemy.scale, enemy.height * enemy.scale) then
 
         hurtSound:stop()
         hurtSound:play()
@@ -513,7 +685,7 @@ function love.update(dt)
         fireball.active = true
         fireball.collected = false       
         fireballSpawnTimer = 0
-        fireballSpawnInterval = love.math.random(4, 8)  
+        fireballSpawnInterval = love.math.random(4, 8) / spawnMultiplier
     end
 
     --Fireball pickup
@@ -533,6 +705,51 @@ function love.update(dt)
         end
     end
     fireball.anim:update(dt)
+
+    -- Lightning Potion spawn logic
+    lightningSpawnTimer = lightningSpawnTimer + dt
+    if lightningSpawnTimer >= lightningSpawnInterval and not lightningPotion.active then
+        lightningPotion.x = player.x + love.math.random(400, 900)
+        lightningPotion.y = groundY - lightningPotion.height * 0.75
+        lightningPotion.active = true
+        lightningSpawnTimer = 0
+        lightningSpawnInterval = love.math.random(10, 18) / spawnMultiplier
+    end
+
+
+    -- Lightning Potion pickup
+    if lightningPotion.active and
+       checkCollision(player.x, player.y, player.width * 3, player.height * 3,
+                      lightningPotion.x, lightningPotion.y,
+                      lightningPotion.width * lightningPotion.scale,
+                      lightningPotion.height * lightningPotion.scale) then
+
+
+        lightningPotion.active = false
+
+        if enemy.alive then
+            -- Play lightning sound
+            lightningSound:stop()
+            lightningSound:play()
+
+            -- Start lightning strike on enemy
+            lightning.active = true
+            lightning.anim:gotoFrame(1)
+            lightning.anim:resume()
+            lightning.life = 15 -- visible for 1.5 seconds
+
+            local frameW, frameH = 168, 102  -- match lightningGrid size
+            -- Center strike roughly over enemy
+            lightning.x = enemy.x + (enemy.width * enemy.scale) / 2 - (frameW * lightning.scale) / 2
+            lightning.y = enemy.y - frameH * lightning.scale * 0.3
+
+            -- Apply debuff: smaller + slower enemy
+            enemy.speed = enemy.baseSpeed * 0.5
+            enemy.scale = enemy.baseScale * 0.6
+            enemy.y = groundY - enemy.height * enemy.scale
+            enemy.debuffTimer = 8   -- seconds debuff lasts
+        end
+    end
 
     --Coin spawn logic
     coin.spawnTimer = coin.spawnTimer + dt
@@ -569,6 +786,40 @@ function love.update(dt)
         end
     end
 
+    -- Update Lightning Potion animation
+    if lightningPotion.active then
+        lightningPotion.anim:update(dt)
+    end
+
+    -- Update lightning strike animation
+    if lightning.active then
+        lightning.anim:update(dt)
+
+        if lightning.life > 0 then
+            lightning.life = lightning.life - dt
+            if lightning.life <= 0 then
+                lightning.active = false
+            end
+        end
+    end
+
+
+    -- Enemy lightning debuff timer
+    if enemy.debuffTimer and enemy.debuffTimer > 0 then
+        enemy.debuffTimer = enemy.debuffTimer - dt
+        if enemy.debuffTimer <= 0 then
+            enemy.debuffTimer = 0
+
+            -- Begin recovery phase instead of instantly restoring speed
+            enemy.recovering = true
+            enemy.recoverySpeed = enemy.speed  -- start recovery from slowed speed
+
+            -- Restore normal size immediately
+            enemy.scale = enemy.baseScale
+            enemy.y = groundY - enemy.height * enemy.scale
+        end
+    end
+
     --Update firespell projectiles
     for i = #firespell.projectiles, 1, -1 do
         local spell = firespell.projectiles[i]
@@ -595,7 +846,7 @@ function love.update(dt)
 
         --Check collision with Gorgon
         elseif enemy.alive and checkCollision(spell.x, spell.y, 48, 48,
-            enemy.x, enemy.y, enemy.width * enemyScale, enemy.height * enemyScale) then
+            enemy.x, enemy.y, enemy.width * enemy.scale, enemy.height * enemy.scale) then
             
             camera.shake = 4
             explosion.active = true
@@ -720,7 +971,6 @@ function love.draw()
         end
     end
 
-
     --Draw player
     local scale = 3
     if player.isDead then
@@ -748,12 +998,11 @@ function love.draw()
     end
 
     --Draw enemy
-    local enemyScale = 1.5
     if enemy.alive then
         if enemy.flip then
-            enemy.anim:draw(enemy.sheet, enemy.x + enemy.width * enemyScale, enemy.y, 0, -enemyScale, enemyScale)
+            enemy.anim:draw(enemy.sheet, enemy.x + enemy.width * enemy.scale, enemy.y, 0, -enemy.scale, enemy.scale)
         else
-            enemy.anim:draw(enemy.sheet, enemy.x, enemy.y, 0, enemyScale, enemyScale)
+            enemy.anim:draw(enemy.sheet, enemy.x, enemy.y, 0, enemy.scale, enemy.scale)
         end
     end
 
@@ -795,6 +1044,23 @@ function love.draw()
         c.anim:draw(coin.sheet, c.x, c.y, 0, 2, 2)
     end
 
+    -- Draw Lightning Potion
+    if lightningPotion.active then
+        local s = lightningPotion.scale   -- scale down from 256x256 to 128x128
+        lightningPotion.anim:draw(
+            lightningPotion.sheet,
+            lightningPotion.x,
+            lightningPotion.y,
+            0,
+            s,
+            s)
+    end
+
+    -- Draw lightning strike on enemy
+    if lightning.active then
+        lightning.anim:draw(lightning.sheet, lightning.x, lightning.y, 0, lightning.scale, lightning.scale)
+    end
+
     --Fire aura while powered
     if player.fireMode then
         love.graphics.setColor(1, 0.3, 0, 0.25)
@@ -810,7 +1076,23 @@ function love.draw()
         love.graphics.setColor(1, 1, 1)
         love.graphics.print("Distance: " .. distance .. " m", 20, 20)
         love.graphics.print("Score: " .. score, 20, 50)
-        -- small hint when powered
+        --Stage reached banner 
+        if stageBanner.active then
+            love.graphics.setFont(fonts.subtitle)
+            love.graphics.setColor(1, 1, 0, stageBanner.alpha)
+
+            local bannerW = love.graphics.getWidth()
+            local text = stageBanner.text
+
+            love.graphics.push()
+            love.graphics.translate(bannerW / 2, stageBanner.y)
+            love.graphics.scale(stageBanner.scale, stageBanner.scale)
+            love.graphics.printf(text, -bannerW/2, 0, bannerW, "center")
+            love.graphics.pop()
+
+            love.graphics.setColor(1, 1, 1)
+        end
+        --small hint when powered
         if player.fireMode then
             love.graphics.print("Fire Mode: F to shoot (" .. math.ceil(player.fireTimer) .. "s)", 20, 80)
         end
