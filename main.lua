@@ -1,13 +1,13 @@
 --Load background music
 gameMusic = love.audio.newSource("audio/game_music.ogg", "stream")
 gameMusic:setLooping(true)
-gameMusic:setVolume(0.7)  -- volume from 0.0 to 1.0
+gameMusic:setVolume(0.5)  
 gameMusic:play()
 
 --High Score System
 local highScore = 0
 local highScore = 0   --total best score (distance + score)
-local lastFinalScore = 0  -- tores last run’s combined final score
+local lastFinalScore = 0  --stores last run's combined final score
 
 --Load saved high score
 local function loadHighScore()
@@ -24,6 +24,7 @@ end
 
 function love.load()
     anim8 = require 'libraries/anim8'
+    love.window.setMode(900, 640, { resizable = false })
     loadHighScore()
 
     --Background
@@ -40,7 +41,7 @@ function love.load()
         subtitle = love.graphics.newFont("fonts/MonsterTitle.ttf", 28),
         character_select = love.graphics.newFont("fonts/MonsterTitle.ttf", 36),
         countdown = love.graphics.newFont("fonts/Ghoulish.ttf",96),
-        stage = love.graphics.newFont("fonts/MonsterTitle.ttf", 40),
+        stage = love.graphics.newFont("fonts/Ghoulish.ttf", 40),
         numbers = love.graphics.newFont("fonts/Ghoulish.ttf", 36)
     }
 
@@ -77,6 +78,8 @@ function love.load()
 
     coinSound = love.audio.newSource("audio/coin_sound.mp3", "static")
     coinSound:setVolume(0.9) 
+
+    gameOverSound = love.audio.newSource("audio/8-bit-game-over-sound-effect-331435.mp3", "static")
 
     --Character selection setup
     characters = {
@@ -150,6 +153,16 @@ function love.load()
         fireTimer = 0
     }
 
+    --Power-up spawn frequency increases each stage
+    local spawnMultiplier = 1
+    if player.stage == 1 then
+        spawnMultiplier = 1.2
+    elseif player.stage == 2 then
+        spawnMultiplier = 1.5
+    elseif player.stage == 3 then
+        spawnMultiplier = 2.0
+    end
+
     --Load default (Pink Monster)
     loadSelectedCharacter()
 
@@ -176,6 +189,32 @@ function love.load()
     enemy.grid = anim8.newGrid(128, 128, enemy.sheet:getWidth(), enemy.sheet:getHeight())
     enemy.anim = anim8.newAnimation(enemy.grid('1-7', 1), 0.1)
 
+    
+    --Skeleton enemy
+    skeleton = {
+        x = -100,
+        y = groundY - 128 * 1.2,
+        width = 128,
+        height = 128,
+        speed = 120,
+        direction = -1,
+        scale = 1.2,
+        alive = false,       
+        patrolRange = 250        
+    }
+
+    skeleton.sheet = love.graphics.newImage("sprites/Walk.png")
+    skeleton.grid = anim8.newGrid(128, 128, skeleton.sheet:getWidth(), skeleton.sheet:getHeight())
+    skeleton.anim = anim8.newAnimation(skeleton.grid('1-7', 1), 0.09)
+
+    --Skeleton death animation (4 frames)
+    skeleton.deadSheet = love.graphics.newImage("sprites/Dead.png")
+    skeleton.deadGrid = anim8.newGrid(128, 128,skeleton.deadSheet:getWidth(),skeleton.deadSheet:getHeight())
+
+    skeleton.deadAnim = anim8.newAnimation(skeleton.deadGrid('1-4', 1),0.15,"pauseAtEnd")
+    skeleton.isDead = false
+    skeleton.deadTimer = 0
+    
     player.stage = 0
     enemy.stage = 0
 
@@ -197,7 +236,7 @@ function love.load()
         active = false
     }
     bombSpawnTimer = 0
-    bombSpawnInterval = math.max(1.5, 5 - distance / 200)
+    bombSpawnInterval = math.max(1.0, (5 - distance / 200) / spawnMultiplier)
 
     --Explosion setup
     explosion = {
@@ -236,32 +275,40 @@ function love.load()
     local fireballGrid = anim8.newGrid(48, 48, fireball.sheet:getWidth(), fireball.sheet:getHeight())
     fireball.anim = anim8.newAnimation(fireballGrid('1-8', 1), 0.08)
     fireballSpawnTimer = 0
-    fireballSpawnInterval = 6  -- seconds
+    fireballSpawnInterval = 6  
 
-    --Lightning Potion power-up (animated)
-    lightningPotion = {
-        sheet = love.graphics.newImage("sprites/Lightning Potion-Sheet.png"),
-        x = -100,
-        y = groundY - 256 * 0.35,  -- adjust so it sits above ground
-        width = 256,
-        height = 256,
-        scale = 0.35,
-        active = false
+    --Skeleton spawn system
+    skeletonSpawner = {
+        timer = 0,
+        interval = 6
     }
 
-    local potionGrid = anim8.newGrid(256, 256, lightningPotion.sheet:getWidth(),lightningPotion.sheet:getHeight())
-    lightningPotion.anim = anim8.newAnimation(potionGrid('1-3', 1, '1-3', 2, '1-3', 3),0.12)  -- speed of the sparkle
-    lightningSpawnTimer = 0
-    lightningSpawnInterval = 12  -- seconds until first spawn
+    --Yellow Potion Power-up (Enemy slowdown)
+    lightningPotion = {
+        sheet = love.graphics.newImage("sprites/yellow_potion_sheet.png"),
+        x = -100,
+        y = groundY - 16 * 3, 
+        width = 16,
+        height = 16,
+        scale = 3,           
+        active = false
+    }
+    lightningPotion.y = groundY - (lightningPotion.height * lightningPotion.scale)
 
-    --Lightning strike animation (the thin horizontal sheet)
+    --Yellow Potion animation
+    local potionGrid = anim8.newGrid(16, 16, lightningPotion.sheet:getWidth(),lightningPotion.sheet:getHeight())
+    lightningPotion.anim = anim8.newAnimation(potionGrid('1-3', 1, '1-3', 2, '1-3', 3),0.10)
+    lightningSpawnTimer = 0
+    lightningSpawnInterval = 6  -- seconds until first spawn
+
+    --Lightning strike animation
     lightning = {
         sheet = love.graphics.newImage("sprites/lightning-strike-Sheet.png"),
         x = 0,
         y = 0,
         active = false,
         scale = 4,
-        life = 0, --how long it stays visible
+        life = 0, 
     }
 
     
@@ -286,7 +333,7 @@ function love.load()
         sheet = love.graphics.newImage("sprites/coin_sheet.png"),
         coins = {},
         spawnTimer = 0,
-        spawnInterval = 2  -- seconds between spawns
+        spawnInterval = 2  
     }
 
     local coinGrid = anim8.newGrid(32, 32, coin.sheet:getWidth(), coin.sheet:getHeight())
@@ -336,6 +383,8 @@ function love.load()
         active = false,
         scale = 1
     }
+
+    deathMusicDelay = 0
 end
 
 
@@ -379,6 +428,16 @@ end
 
 
 function love.update(dt)
+    local realDT = dt
+
+    --Death music silence timer
+    if deathMusicDelay and deathMusicDelay > 0 then
+        deathMusicDelay = deathMusicDelay - dt
+        if deathMusicDelay <= 0 then
+            gameMusic:play()     --restart music AFTER delay
+        end
+    end
+
     --Blinking text for menu
     if gameState == "menu" then
         blinkTimer = blinkTimer + dt
@@ -400,13 +459,13 @@ function love.update(dt)
     if gameState == "gameover" then
         gameOverTime = gameOverTime + dt
 
-        -- Fade in
+        --Fade in
         gameOverFade = math.min(1, gameOverFade + dt * 1.2)
 
-        -- Pulse scaling
+        --Pulse scaling
         gameOverScale = 1 + math.sin(gameOverTime * 2.5) * 0.08
 
-        -- Shake decreases over time
+        --Shake decreases over time
         gameOverShake = math.max(0, gameOverShake - dt * 2)
     end
 
@@ -418,6 +477,12 @@ function love.update(dt)
     end
 
     if gameState ~= "playing" then
+        --ONLY auto-play during menu or character select
+        if gameState == "menu" or gameState == "character_select" then
+            if deathMusicDelay <= 0 then
+                gameMusic:play()
+            end
+        end
         return
     end
 
@@ -431,7 +496,7 @@ function love.update(dt)
 
             if countdown.number < 0 then
                 countdown.active = false
-                countdown.justEnded = true   -- countdown finished
+                countdown.justEnded = true   
             end
         end
 
@@ -445,7 +510,7 @@ function love.update(dt)
         return
     end
 
-    --FINAL STEP: unlock camera on the FIRST real gameplay frame
+    --Unlock camera on the FIRST real gameplay frame
     if camera.lock then
         camera.lock = false
     end
@@ -524,6 +589,13 @@ function love.update(dt)
         player.x = player.x - player.speed * dt
         player.flip = true
         isMoving = true
+    end
+
+    -- DESPAWN lightning potion if it gets too far behind the player
+    if lightningPotion.active and lightningPotion.x < player.x - 600 then
+        lightningPotion.active = false
+        lightningPotion.collected = false
+        lightningSpawnTimer = 0
     end
 
     --Gravity and jumping
@@ -705,12 +777,37 @@ function love.update(dt)
         enemy.x = player.x - love.math.random(500, 800)
     end
 
+    --Skeleton movement (Goomba-style patrol)
+    if skeleton.alive then
+        skeleton.startX = skeleton.startX or skeleton.x
+
+        skeleton.x = skeleton.x + skeleton.speed * dt * skeleton.direction
+
+        if skeleton.x < skeleton.startX - skeleton.patrolRange then
+            skeleton.direction = 1
+        elseif skeleton.x > skeleton.startX + skeleton.patrolRange then
+            skeleton.direction = -1
+        end
+
+        skeleton.anim:update(dt)
+    end
+
+    --Update skeleton hit cooldown
+    if skeleton.hitCooldown and skeleton.hitCooldown > 0 then
+        skeleton.hitCooldown = skeleton.hitCooldown - dt
+    end
+
+    --Despawn skeleton if too far behind player
+    if skeleton.alive and skeleton.x < player.x - 600 then
+        skeleton.alive = false
+    end
+
     if not camera.lock then
         camera.x = player.x - love.graphics.getWidth() / 2
         if camera.x < 0 then camera.x = 0 end
     end
 
-    -- NEW: Distance starts at 0
+    --Distance starts at 0
     distance = math.floor((player.x - distanceOffset) / 10)
 
     --Stage progression logic
@@ -728,15 +825,9 @@ function love.update(dt)
         showStageMessage("STAGE 1 REACHED!")
     end
 
-    --Power-up spawn frequency increases each stage
-    local spawnMultiplier = 1
-    if player.stage == 1 then
-        spawnMultiplier = 1.2
-    elseif player.stage == 2 then
-        spawnMultiplier = 1.5
-    elseif player.stage == 3 then
-        spawnMultiplier = 2.0
-    end
+    spawnMultiplier = 1 + (player.stage * 0.2)
+
+    
 
     --Apply permanent speed increase per stage
     local stageSpeeds = { 
@@ -750,6 +841,17 @@ function love.update(dt)
     if enemy.debuffTimer <= 0 then
         enemy.speed = stageSpeeds[enemy.stage] * 0.99
     end  
+
+    --Increase firespell speed based on stage
+    if player.stage == 0 then
+        firespell.speed = 600     
+    elseif player.stage == 1 then
+        firespell.speed = 700
+    elseif player.stage == 2 then
+        firespell.speed = 900     
+    elseif player.stage == 3 then
+        firespell.speed = 1100    
+    end
     
 
     --Gorgon always kills player on contact
@@ -767,6 +869,14 @@ function love.update(dt)
         player.fadeAlpha = 0
         camera.shake = 10
 
+        gameMusic:stop()
+
+        gameOverSound:stop()
+        gameOverSound:play()
+
+        --Add silence gap before restarting game music
+        deathMusicDelay = 5.0 
+
         --FINAL SCORE = distance + coin score
         lastFinalScore = distance + score
 
@@ -783,15 +893,51 @@ function love.update(dt)
         gameOverScale = 0.6   
     end
 
+    --Skeleton collision 
+    if skeleton.alive then
+
+        if checkCollision(
+            player.x, player.y, player.width * 3, player.height * 3,
+            skeleton.x, skeleton.y,
+            skeleton.width * skeleton.scale,
+            skeleton.height * skeleton.scale,
+            hitbox.playerShrink, hitbox.enemyShrink
+        ) then
+
+            --Prevent rapid re-hits
+            if skeleton.hitCooldown and skeleton.hitCooldown > 0 then
+                -- ignore collision
+            else
+                if shield.collected then
+                    --Shield blocks skeleton just like bombs
+                    shield.collected = false
+                    skeleton.hitCooldown = 0.5   -- prevent immediate re-hit
+                else
+                    --Skeleton hurts player normally
+                    hurtSound:stop()
+                    hurtSound:play()
+
+                    player.slowMultiplier = 0.5
+                    player.slowTimer = 1.0
+
+                    player.isHurt = true
+                    player.hurtTimer = 0
+                    player.currentAnim = player.hurtAnim
+                    player.hurtAnim:gotoFrame(1)
+                end
+            end
+        end
+    end
+
     --Fireball spawn
     fireballSpawnTimer = fireballSpawnTimer + dt
     if fireballSpawnTimer >= fireballSpawnInterval and not fireball.collected then
         fireball.x = player.x + love.math.random(400, 900)
     
-       -- Calculate player's maximum jump height
+       --Calculate player's maximum jump height
         local maxJumpHeight = groundY - ((player.jumpForce ^ 2) / (2 * player.gravity)) - player.height * 3
 
-        -- Fireball can appear ANYWHERE between player max jump height and ground level
+        --Fireball can appear ANYWHERE between player max jump height and ground level
         fireball.y = love.math.random(maxJumpHeight, groundY - fireball.height * 3)
 
         fireball.active = true
@@ -826,47 +972,42 @@ function love.update(dt)
     lightningSpawnTimer = lightningSpawnTimer + dt
     if lightningSpawnTimer >= lightningSpawnInterval and not lightningPotion.active then
         lightningPotion.x = player.x + love.math.random(400, 900)
-        lightningPotion.y = groundY - lightningPotion.height * 0.75
+        lightningPotion.y = groundY - (lightningPotion.height * lightningPotion.scale) - 5
         lightningPotion.active = true
         lightningSpawnTimer = 0
-        lightningSpawnInterval = love.math.random(10, 18) / spawnMultiplier
+        lightningSpawnInterval = love.math.random(4, 8) / spawnMultiplier
     end
 
 
     --Lightning Potion pickup
     if lightningPotion.active and 
-        checkCollision(
-            player.x, player.y, player.width * 3, player.height * 3,
-            lightningPotion.x, lightningPotion.y,
-            lightningPotion.width * lightningPotion.scale,
-            lightningPotion.height * lightningPotion.scale,
-            hitbox.playerShrink, hitbox.pickupGrow
-        ) then
-
-
+        checkCollision(player.x, player.y, player.width * 3, player.height * 3,
+                    lightningPotion.x, lightningPotion.y,
+                    lightningPotion.width * lightningPotion.scale,
+                    lightningPotion.height * lightningPotion.scale,
+                    hitbox.playerShrink, hitbox.pickupGrow)
+    then
         lightningPotion.active = false
+        lightningPotion.collected = true
+        lightningSpawnTimer = 0
 
         if enemy.alive then
-            --Play lightning sound
             lightningSound:stop()
             lightningSound:play()
 
-            --Start lightning strike on enemy
             lightning.active = true
             lightning.anim:gotoFrame(1)
             lightning.anim:resume()
-            lightning.life = 15 -- visible for 1.5 seconds
+            lightning.life = 1.5
 
-            local frameW, frameH = 168, 102  --match lightningGrid size
-            -- Center strike roughly over enemy
-            lightning.x = enemy.x + (enemy.width * enemy.scale) / 2 - (frameW * lightning.scale) / 2
+            local frameW, frameH = 168, 102
+            lightning.x = enemy.x + (enemy.width * enemy.scale)/2 - (frameW * lightning.scale)/2
             lightning.y = enemy.y - frameH * lightning.scale * 0.3
 
-            --Apply debuff: smaller + slower enemy
             enemy.speed = enemy.baseSpeed * 0.5
             enemy.scale = enemy.baseScale * 0.6
             enemy.y = groundY - enemy.height * enemy.scale
-            enemy.debuffTimer = 3   -- seconds debuff lasts
+            enemy.debuffTimer = 3
         end
     end
 
@@ -909,6 +1050,39 @@ function love.update(dt)
         end
     end
 
+    --Update death animation
+    if skeleton.isDead then
+        skeleton.deadAnim:update(dt)
+        skeleton.deadTimer = skeleton.deadTimer + dt
+
+        --Remove corpse after finished
+        if skeleton.deadTimer > 1.0 then
+            skeleton.isDead = false
+        end
+    end
+
+    --Skeleton spawn logic
+    skeletonSpawner.timer = skeletonSpawner.timer + dt
+
+    if skeletonSpawner.timer >= skeletonSpawner.interval and not skeleton.alive then
+        skeleton.x = player.x + love.math.random(400, 900)
+        skeleton.y = groundY - skeleton.height * skeleton.scale
+        skeleton.direction = love.math.random(0, 1) == 0 and -1 or 1
+        skeleton.alive = true
+
+        --Reset patrol center
+        skeleton.startX = skeleton.x
+
+        skeletonSpawner.timer = 0
+        local baseMin = 5
+        local baseMax = 9
+
+        skeletonSpawner.interval = love.math.random(
+            baseMin / spawnMultiplier,
+            baseMax / spawnMultiplier
+        )
+    end
+
     --Update Lightning Potion animation
     if lightningPotion.active then
         lightningPotion.anim:update(dt)
@@ -917,14 +1091,13 @@ function love.update(dt)
     --Update lightning strike animation
     if lightning.active then
         lightning.anim:update(dt)
-
-        if lightning.life > 0 then
-            lightning.life = lightning.life - dt
-            if lightning.life <= 0 then
-                lightning.active = false
-            end
+        lightning.life = lightning.life - dt
+        if lightning.life <= 0 then
+            lightning.active = false
+            lightningPotion.collected = false   -- NEW
         end
     end
+
 
 
     --Enemy lightning debuff timer
@@ -933,24 +1106,24 @@ function love.update(dt)
         if enemy.debuffTimer <= 0 then
             enemy.debuffTimer = 0
 
-            -- Enemy lightning debuff timer
+            --Enemy lightning debuff timer
             if enemy.debuffTimer and enemy.debuffTimer > 0 then
                 enemy.debuffTimer = enemy.debuffTimer - dt
                 if enemy.debuffTimer <= 0 then
                     enemy.debuffTimer = 0
 
-                    -- INSTANT RECOVERY
+                    --Instantly restore speed and size
                     enemy.speed = enemy.baseSpeed
                     enemy.scale = enemy.baseScale
                     enemy.y = groundY - enemy.height * enemy.scale
                     enemy.recovering = false
 
-                    -- GUARANTEED RETURN ONSCREEN AFTER DEBUFF
+                    --Guarantee Gorgon is near player after debuff ends
                     local distanceFromPlayer = enemy.x - player.x
 
-                    -- If enemy is too far behind OR too far ahead
+                    --If enemy is too far behind OR too far ahead
                     if distanceFromPlayer < -600 or distanceFromPlayer > 600 then
-                        -- Teleport Gorgon right behind player (close range)
+                        --Teleport Gorgon right behind player (close range)
                         enemy.x = player.x - love.math.random(250, 400)
                     end
                 end
@@ -965,8 +1138,8 @@ function love.update(dt)
     --Update firespell projectiles
     for i = #firespell.projectiles, 1, -1 do
         local spell = firespell.projectiles[i]
-        spell.x = spell.x + firespell.speed * dt * spell.dir
-        spell.anim:update(dt)
+        spell.x = spell.x + firespell.speed * realDT * spell.dir
+        spell.anim:update(realDT)
 
         --Check collision with bombs
         if bomb.active and checkCollision(spell.x, spell.y, 48, 48,
@@ -985,6 +1158,8 @@ function love.update(dt)
             explosion.anim:gotoFrame(1)
             explosion.anim:resume()
 
+            score = score + 5
+
             --Remove the spell projectile
             table.remove(firespell.projectiles, i)
 
@@ -1002,25 +1177,54 @@ function love.update(dt)
             explosion.anim:gotoFrame(1)
             explosion.anim:resume()
             table.remove(firespell.projectiles, i)
+        
+        --Fireball kills skeleton
+        elseif skeleton.alive and
+            checkCollision(
+                spell.x, spell.y, 48, 48,
+                skeleton.x, skeleton.y,
+                skeleton.width * skeleton.scale,
+                skeleton.height * skeleton.scale,
+                1, hitbox.enemyShrink
+            )
+        then
+            --Spawn small explosion
+            explosion.active = true
+            explosion.x = spell.x - 32
+            explosion.y = spell.y - 32
+            explosion.anim:gotoFrame(1)
+            explosion.anim:resume()
 
+            --Kill skeleton
+            skeleton.alive = false
+            skeleton.isDead = true
+            skeleton.deadTimer = 0
+
+            score = score + 10
+
+            --Remove projectile
+            table.remove(firespell.projectiles, i)
+
+        --Remove if far off-screen
         elseif spell.x < camera.x - 200 or spell.x > camera.x + love.graphics.getWidth() + 200 then
             table.remove(firespell.projectiles, i)
         end
     end
 
-    -- FINAL SAFETY CHECK: ensure Gorgon is on-screen after debuff
+    --Ensure Gorgon is on-screen after debuff
     if enemy.debuffTimer == 0 then
         local distanceFromPlayer = enemy.x - player.x
 
-        -- If enemy is still too far behind or ahead AFTER all movement
+        --If enemy is still too far behind or ahead AFTER all movement
         if distanceFromPlayer < -600 or distanceFromPlayer > 600 then
-            -- Forced teleport closer behind player
+            --Forced teleport closer behind player
             enemy.x = player.x - love.math.random(400, 650)
         end
     end
 
     player.currentAnim:update(dt)
     enemy.anim:update(dt)
+    
 end
 
 
@@ -1164,6 +1368,41 @@ function love.draw()
         end
     end
 
+    --Draw skeleton
+    if skeleton.alive then
+        --Walking animation
+        if skeleton.direction == -1 then
+            skeleton.anim:draw(
+                skeleton.sheet,
+                skeleton.x + skeleton.width * skeleton.scale,
+                skeleton.y,
+                0,
+                -skeleton.scale,
+                skeleton.scale
+            )
+        else
+            skeleton.anim:draw(
+                skeleton.sheet,
+                skeleton.x,
+                skeleton.y,
+                0,
+                skeleton.scale,
+                skeleton.scale
+            )
+        end
+
+    elseif skeleton.isDead then
+        --Death animation
+        skeleton.deadAnim:draw(
+            skeleton.deadSheet,
+            skeleton.x,
+            skeleton.y,
+            0,
+            skeleton.scale,
+            skeleton.scale
+        )
+    end
+
     --Draw bomb
     if bomb.active then
         love.graphics.draw(bomb.image, bomb.x, bomb.y, 0, 3, 3)
@@ -1204,7 +1443,7 @@ function love.draw()
 
     --Draw Lightning Potion
     if lightningPotion.active then
-        local s = lightningPotion.scale   -- scale down from 256x256 to 128x128
+        local s = lightningPotion.scale   
         lightningPotion.anim:draw(
             lightningPotion.sheet,
             lightningPotion.x,
@@ -1235,7 +1474,7 @@ function love.draw()
 
         -- Draw Stage Banner
         if stageBanner.active then
-            -- Save current font
+            --Save current font
             local previousFont = love.graphics.getFont()
 
             love.graphics.setFont(fonts.stage)
@@ -1252,12 +1491,10 @@ function love.draw()
             love.graphics.pop()
 
             love.graphics.setColor(1, 1, 1)
-
-            -- RESTORE original font
             love.graphics.setFont(previousFont)
         end
         
-        -- NEW: Show countdown overlay on top of the game
+        --Show countdown overlay on top of the game
         if countdown.active then
             love.graphics.setColor(0, 0, 0, 0.5)
             love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
@@ -1275,24 +1512,24 @@ function love.draw()
             love.graphics.setColor(1, 1, 1)
             love.graphics.setFont(font)
         else
-           -- Draw Distance and Score when Countdown is done
+           --Draw Distance and Score when Countdown is done
             love.graphics.print("Distance: " .. distance .. " m", 20, 20)
             love.graphics.print("Score: " .. score, 20, 50)
 
-            -- small hint when powered
+            --Small hint when powered
             if player.fireMode then
                 love.graphics.print("Fire Mode: F to shoot (" .. math.ceil(player.fireTimer) .. "s)", 20, 80)
             end
-                    -- NEW: Hint to pause
-        local hint = "Press ESC to pause"
-        local hintW = font:getWidth(hint)
-        local margin = 20
-        love.graphics.print(hint,
-            love.graphics.getWidth() - hintW - margin,
-            margin)
+            --Hint to pause
+            local hint = "Press ESC to pause"
+            local hintW = font:getWidth(hint)
+            local margin = 20
+            love.graphics.print(hint,
+                love.graphics.getWidth() - hintW - margin,
+                margin)
         end
     
-        -- Pause Menu 
+        --Pause Menu 
         if pauseMenu.active then
             love.graphics.setColor(0, 0, 0, 0.6)
             love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
@@ -1333,13 +1570,12 @@ function love.draw()
         love.graphics.setColor(0, 0, 0, 0.75)
         love.graphics.rectangle("fill", 0, 0, w, h)
 
-        -- Title
+       
+        --TITLE
         love.graphics.setFont(fonts.title)
         love.graphics.setColor(1, 0.3, 0.3)
-        -- ANIMATED GAME OVER TITLE
         local title = "GAME OVER"
 
-        -- shake offset
         local shakeX = (math.random() - 0.5) * gameOverShake * 5
 
         love.graphics.setFont(fonts.title)
@@ -1348,21 +1584,16 @@ function love.draw()
         love.graphics.push()
         love.graphics.translate(w/2 + shakeX, h * 0.20 + offsetY)
         love.graphics.scale(gameOverScale, gameOverScale)
-
         love.graphics.printf(title, -w/2, 0, w, "center")
-
         love.graphics.pop()
 
-        -----------------------------------------------------------------
-        -- SHARED TEXT SETTINGS
-        -----------------------------------------------------------------
+        --SHARED SETTINGS
         local labelFont = fonts.subtitle
         local numberFont = fonts.numbers
         local numOffsetY = -3
 
-        -----------------------------------------------------------------
-        -- SCORE
-        -----------------------------------------------------------------
+
+        --SCORE
         local scoreLabel = "Score "
         local scoreValue = tostring(score)
 
@@ -1379,9 +1610,7 @@ function love.draw()
         love.graphics.setColor(1, 1, 0.5)
         love.graphics.print(scoreValue, startX + labelW, scoreY + numOffsetY)
 
-        -----------------------------------------------------------------
-        -- DISTANCE
-        -----------------------------------------------------------------
+        --DISTANCE
         local distLabelLeft = "Distance "
         local distValue = tostring(distance)
         local distLabelRight = " m"
@@ -1405,15 +1634,33 @@ function love.draw()
         love.graphics.setColor(1, 1, 1)
         love.graphics.print(distLabelRight, distX + leftW + numW, distY)
 
-        -----------------------------------------------------------------
-        -- HIGH SCORE (combined score)
-        -----------------------------------------------------------------
+
+        --FINAL SCORE
+        local finalLabel = "Final Score "
+        local finalValue = tostring(lastFinalScore)
+
+        local finalLabelW = labelFont:getWidth(finalLabel)
+        local finalValueW = numberFont:getWidth(finalValue)
+        local finalY = h * 0.59 + offsetY
+        local finalX = (w - (finalLabelW + finalValueW)) / 2
+
+        love.graphics.setFont(labelFont)
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.print(finalLabel, finalX, finalY)
+
+        love.graphics.setFont(numberFont)
+        love.graphics.setColor(1, 1, 0.5)
+        love.graphics.print(finalValue, finalX + finalLabelW, finalY + numOffsetY)
+
+
+
+        --HIGH SCORE
         local hsLabel = "High Score "
         local hsValue = tostring(highScore)
 
         local hsLabelW = labelFont:getWidth(hsLabel)
         local hsValueW = numberFont:getWidth(hsValue)
-        local hsY = h * 0.59 + offsetY
+        local hsY = h * 0.66 + offsetY
         local hsX = (w - (hsLabelW + hsValueW)) / 2
 
         love.graphics.setFont(labelFont)
@@ -1424,13 +1671,11 @@ function love.draw()
         love.graphics.setColor(1, 1, 0.5)
         love.graphics.print(hsValue, hsX + hsLabelW, hsY + numOffsetY)
 
-        -----------------------------------------------------------------
-        -- BUTTONS
-        -----------------------------------------------------------------
+        --BUTTONS
         love.graphics.setFont(fonts.subtitle)
         love.graphics.setColor(0.8, 0.8, 0.8)
-        love.graphics.printf("Press ENTER to Replay", 0, h * 0.70 + offsetY, w, "center")
-        love.graphics.printf("Press R to Return to Menu", 0, h * 0.76 + offsetY, w, "center")
+        love.graphics.printf("Press ENTER to Replay", 0, h * 0.74 + offsetY, w, "center")
+        love.graphics.printf("Press R to Return to Menu", 0, h * 0.80 + offsetY, w, "center")
     end
 end
 
