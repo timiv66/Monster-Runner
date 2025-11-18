@@ -4,8 +4,27 @@ gameMusic:setLooping(true)
 gameMusic:setVolume(0.7)  -- volume from 0.0 to 1.0
 gameMusic:play()
 
+--High Score System
+local highScore = 0
+local highScore = 0   --total best score (distance + score)
+local lastFinalScore = 0  -- tores last run’s combined final score
+
+--Load saved high score
+local function loadHighScore()
+    if love.filesystem.getInfo("highscore.txt") then
+        local contents = love.filesystem.read("highscore.txt")
+        highScore = tonumber(contents) or 0
+    end
+end
+
+--Save new high score
+local function saveHighScore()
+    love.filesystem.write("highscore.txt", tostring(highScore))
+end
+
 function love.load()
     anim8 = require 'libraries/anim8'
+    loadHighScore()
 
     --Background
     background = love.graphics.newImage('sprites/cal.jpg')
@@ -35,10 +54,18 @@ function love.load()
     tileSize = 48
     groundRows = 3     
     groundCols = math.ceil(love.graphics.getWidth() / tileSize) + 2
+    -- Hitbox tuning
+    hitbox = {
+        playerShrink = 0.55,   
+        enemyShrink  = 0.60,   
+        bombShrink   = 0.70,   
+        pickupGrow   = 1.15,   
+    }
+    
 
     --Load explosion sound effect
     explosionSound = love.audio.newSource("audio/explosion.ogg", "static")
-    explosionSound:setVolume(0.9) -- optional: adjust loudness (0.0–1.0)
+    explosionSound:setVolume(0.9) 
 
     --Load hurt (damage) sound
     hurtSound = love.audio.newSource("audio/damage.ogg", "static")
@@ -165,8 +192,8 @@ function love.load()
         image = love.graphics.newImage("sprites/bomb.png"),
         x = -100,
         y = groundY - 32 * 3,
-        width = 32,
-        height = 32,
+        width = 48,
+        height = 48,
         active = false
     }
     bombSpawnTimer = 0
@@ -241,7 +268,7 @@ function love.load()
     local lightningGrid = anim8.newGrid(168, 102, lightning.sheet:getWidth(), lightning.sheet:getHeight())
     lightning.anim = anim8.newAnimation(lightningGrid('1-10', 1), 0.08, 'pauseAtEnd')
 
-    -- Lightning hit sound
+    --Lightning hit sound
     lightningSound = love.audio.newSource("audio/lightning-spell-386163.mp3", "static")
     lightningSound:setVolume(0.8)
 
@@ -281,6 +308,12 @@ function love.load()
     gameState = "menu" 
     blinkTimer = 0
     blinkVisible = true
+
+    -- GAME OVER title animation
+    local gameOverTime = 0
+    local gameOverFade = 0
+    local gameOverShake = 0
+    local gameOverScale = 1
 
     --Countdown
     countdown = {
@@ -364,6 +397,19 @@ function love.update(dt)
         return
     end
 
+    if gameState == "gameover" then
+        gameOverTime = gameOverTime + dt
+
+        -- Fade in
+        gameOverFade = math.min(1, gameOverFade + dt * 1.2)
+
+        -- Pulse scaling
+        gameOverScale = 1 + math.sin(gameOverTime * 2.5) * 0.08
+
+        -- Shake decreases over time
+        gameOverShake = math.max(0, gameOverShake - dt * 2)
+    end
+
     --Stage message fade-out
     if stageMessageTimer > 0 then
         stageMessageTimer = stageMessageTimer - dt
@@ -391,15 +437,15 @@ function love.update(dt)
 
         return
     end
-
-    -- Skip exactly one frame AFTER countdown finishes
+    
+    --LOCK camera immediately after countdown ends
     if countdown.justEnded then
         countdown.justEnded = false
-        camera.lock = true      -- keep camera frozen this frame
+        camera.lock = true      
         return
     end
 
-    -- FINAL STEP: unlock camera on the FIRST real gameplay frame
+    --FINAL STEP: unlock camera on the FIRST real gameplay frame
     if camera.lock then
         camera.lock = false
     end
@@ -409,16 +455,16 @@ function love.update(dt)
         return
     end
 
-    -- Stage Banner Animation
+    --Stage Banner Animation
     if stageBanner.active then
         stageBanner.timer = stageBanner.timer - dt
 
-        -- Fade in for first 0.5 sec
+        --Fade in for first 0.5 sec
         if stageBanner.alpha < 1 and stageBanner.timer > 1.5 then
             stageBanner.alpha = math.min(1, stageBanner.alpha + dt * 2)
         end
 
-        -- Slide-down animation toward targetY
+        --Slide-down animation toward targetY
         if stageBanner.y < stageBanner.targetY then
             stageBanner.y = stageBanner.y + dt * 200
             if stageBanner.y > stageBanner.targetY then
@@ -426,18 +472,18 @@ function love.update(dt)
             end
         end
 
-        -- Pop animation (scale grows slightly then settles)
+        --Pop animation
         stageBanner.scale = stageBanner.scale + dt * 2
         if stageBanner.scale > 1 then
             stageBanner.scale = 1
         end
 
-        -- Fade-out near the end
+        --Fade-out near the end
         if stageBanner.timer < 0.7 then
             stageBanner.alpha = math.max(0, stageBanner.alpha - dt * 2)
         end
 
-        -- Remove when done
+        --Remove when done
         if stageBanner.timer <= 0 then
             stageBanner.active = false
         end
@@ -529,8 +575,8 @@ function love.update(dt)
     end
 
     --Bomb collision with the player
-    if bomb.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
-                                      bomb.x, bomb.y, bomb.width, bomb.height) then
+    if bomb.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3, bomb.x, bomb.y, bomb.width, bomb.height,
+                                      hitbox.playerShrink, hitbox.bombShrink) then
         if not shield.collected then
             bomb.active = false
 
@@ -564,7 +610,9 @@ function love.update(dt)
 
     --Shield pickup
     if shield.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
-                                        shield.x, shield.y, shield.width, shield.height) then
+                                        shield.x, shield.y, shield.width, shield.height,
+                                        hitbox.playerShrink, hitbox.pickupGrow
+    ) then
         shield.active = false
         shield.collected = true
     end
@@ -707,8 +755,9 @@ function love.update(dt)
     --Gorgon always kills player on contact
     local playerScale = 3
     if not player.isDead and
-        checkCollision(player.x, player.y, player.width * playerScale, player.height * playerScale,
-                  enemy.x, enemy.y, enemy.width * enemy.scale, enemy.height * enemy.scale) then
+        checkCollision(player.x, player.y, player.width * 3, player.height * 3,
+                       enemy.x, enemy.y, enemy.width * enemy.scale, enemy.height * enemy.scale,
+                       hitbox.playerShrink, hitbox.enemyShrink) then
 
         hurtSound:stop()
         hurtSound:play()
@@ -717,6 +766,21 @@ function love.update(dt)
         player.deathAnim:gotoFrame(1)
         player.fadeAlpha = 0
         camera.shake = 10
+
+        --FINAL SCORE = distance + coin score
+        lastFinalScore = distance + score
+
+        --Check for new high score
+        if lastFinalScore > highScore then
+            highScore = lastFinalScore
+            saveHighScore()
+        end
+
+        --Reset GAME OVER animation
+        gameOverTime = 0
+        gameOverFade = 0
+        gameOverShake = 4      
+        gameOverScale = 0.6   
     end
 
     --Fireball spawn
@@ -737,8 +801,11 @@ function love.update(dt)
     end
 
     --Fireball pickup
-    if fireball.active and checkCollision(player.x, player.y, player.width * 3, player.height * 3,
-                                      fireball.x, fireball.y, fireball.width, fireball.height) then
+    if fireball.active and checkCollision(
+        player.x, player.y, player.width * 3, player.height * 3,
+        fireball.x, fireball.y, fireball.width, fireball.height,
+        hitbox.playerShrink, hitbox.pickupGrow
+    ) then
         fireball.active = false
         fireball.collected = true
         player.fireMode = true           
@@ -767,11 +834,14 @@ function love.update(dt)
 
 
     --Lightning Potion pickup
-    if lightningPotion.active and
-       checkCollision(player.x, player.y, player.width * 3, player.height * 3,
-                      lightningPotion.x, lightningPotion.y,
-                      lightningPotion.width * lightningPotion.scale,
-                      lightningPotion.height * lightningPotion.scale) then
+    if lightningPotion.active and 
+        checkCollision(
+            player.x, player.y, player.width * 3, player.height * 3,
+            lightningPotion.x, lightningPotion.y,
+            lightningPotion.width * lightningPotion.scale,
+            lightningPotion.height * lightningPotion.scale,
+            hitbox.playerShrink, hitbox.pickupGrow
+        ) then
 
 
         lightningPotion.active = false
@@ -825,8 +895,12 @@ function love.update(dt)
         if c.x < player.x - 500 then
             table.remove(coin.coins, i)
         --Player collects coin
-        elseif checkCollision(player.x, player.y, player.width * 3, player.height * 3,
-                            c.x, c.y, 32, 32) then
+        elseif checkCollision(
+                player.x, player.y, player.width * 3, player.height * 3,
+                c.x, c.y, 32, 32,
+                hitbox.playerShrink, hitbox.pickupGrow
+            ) then
+
             coinSound:stop()   
             coinSound:play()
 
@@ -835,12 +909,12 @@ function love.update(dt)
         end
     end
 
-    -- Update Lightning Potion animation
+    --Update Lightning Potion animation
     if lightningPotion.active then
         lightningPotion.anim:update(dt)
     end
 
-    -- Update lightning strike animation
+    --Update lightning strike animation
     if lightning.active then
         lightning.anim:update(dt)
 
@@ -896,7 +970,9 @@ function love.update(dt)
 
         --Check collision with bombs
         if bomb.active and checkCollision(spell.x, spell.y, 48, 48,
-            bomb.x, bomb.y, bomb.width, bomb.height) then
+                bomb.x, bomb.y, bomb.width, bomb.height,
+                1, hitbox.bombShrink
+            ) then
 
             explosionSound:stop()
             explosionSound:play()
@@ -913,8 +989,11 @@ function love.update(dt)
             table.remove(firespell.projectiles, i)
 
         --Check collision with Gorgon
-        elseif enemy.alive and checkCollision(spell.x, spell.y, 48, 48,
-            enemy.x, enemy.y, enemy.width * enemy.scale, enemy.height * enemy.scale) then
+        elseif enemy.alive and checkCollision(
+                spell.x, spell.y, 48, 48,
+                enemy.x, enemy.y, enemy.width * enemy.scale, enemy.height * enemy.scale,
+                1, hitbox.enemyShrink
+            ) then
             
             camera.shake = 4
             explosion.active = true
@@ -1249,82 +1328,116 @@ function love.draw()
     --Game Over Screen
     if gameState == "gameover" then
         local w, h = love.graphics.getWidth(), love.graphics.getHeight()
-        local offsetY = -50  -- move everything up
-    
+        local offsetY = -40
+
         love.graphics.setColor(0, 0, 0, 0.75)
         love.graphics.rectangle("fill", 0, 0, w, h)
 
-        --NEW: GAME OVER title
+        -- Title
         love.graphics.setFont(fonts.title)
         love.graphics.setColor(1, 0.3, 0.3)
-        love.graphics.printf("GAME OVER", 0, h * 0.2 + offsetY, w, "center")
+        -- ANIMATED GAME OVER TITLE
+        local title = "GAME OVER"
 
-        --NEW: Score row
+        -- shake offset
+        local shakeX = (math.random() - 0.5) * gameOverShake * 5
+
+        love.graphics.setFont(fonts.title)
+        love.graphics.setColor(1, 0.3, 0.3, gameOverFade)
+
+        love.graphics.push()
+        love.graphics.translate(w/2 + shakeX, h * 0.20 + offsetY)
+        love.graphics.scale(gameOverScale, gameOverScale)
+
+        love.graphics.printf(title, -w/2, 0, w, "center")
+
+        love.graphics.pop()
+
+        -----------------------------------------------------------------
+        -- SHARED TEXT SETTINGS
+        -----------------------------------------------------------------
+        local labelFont = fonts.subtitle
+        local numberFont = fonts.numbers
+        local numOffsetY = -3
+
+        -----------------------------------------------------------------
+        -- SCORE
+        -----------------------------------------------------------------
         local scoreLabel = "Score "
         local scoreValue = tostring(score)
 
-        local labelFont = fonts.subtitle
-        local numberFont = fonts.numbers
-
-        local labelWidth = labelFont:getWidth(scoreLabel)
-        local numberWidth = numberFont:getWidth(scoreValue)
-
-        local totalWidth = labelWidth + numberWidth
         local scoreY = h * 0.45 + offsetY
-        local startX = (w - totalWidth) / 2
-        local numOffsetY  = -3   -- negative = move numbers up, positive = down
-            
+        local labelW = labelFont:getWidth(scoreLabel)
+        local valueW = numberFont:getWidth(scoreValue)
+        local startX = (w - (labelW + valueW)) / 2
+
         love.graphics.setFont(labelFont)
         love.graphics.setColor(1, 1, 1)
         love.graphics.print(scoreLabel, startX, scoreY)
 
         love.graphics.setFont(numberFont)
         love.graphics.setColor(1, 1, 0.5)
-        love.graphics.print(scoreValue, startX + labelWidth, scoreY + numOffsetY)
+        love.graphics.print(scoreValue, startX + labelW, scoreY + numOffsetY)
 
-        -- NEW: Distance row
+        -----------------------------------------------------------------
+        -- DISTANCE
+        -----------------------------------------------------------------
         local distLabelLeft = "Distance "
-        local distNumber = tostring(distance)
+        local distValue = tostring(distance)
         local distLabelRight = " m"
 
-        local leftWidth = labelFont:getWidth(distLabelLeft)
-        local numberWidth2 = numberFont:getWidth(distNumber)
-        local rightWidth = labelFont:getWidth(distLabelRight)
+        local leftW = labelFont:getWidth(distLabelLeft)
+        local numW = numberFont:getWidth(distValue)
+        local rightW = labelFont:getWidth(distLabelRight)
 
-        local totalWidth2 = leftWidth + numberWidth2 + rightWidth
-        local distY = h * 0.53 + offsetY
-        local startX2 = (w - totalWidth2) / 2
+        local distY = h * 0.52 + offsetY
+        local distX = (w - (leftW + numW + rightW)) / 2
 
         love.graphics.setFont(labelFont)
         love.graphics.setColor(1, 1, 1)
-        love.graphics.print(distLabelLeft, startX2, distY)
+        love.graphics.print(distLabelLeft, distX, distY)
 
         love.graphics.setFont(numberFont)
         love.graphics.setColor(1, 1, 0.5)
-        love.graphics.print(distNumber, startX2 + leftWidth, distY + numOffsetY)
+        love.graphics.print(distValue, distX + leftW, distY + numOffsetY)
 
         love.graphics.setFont(labelFont)
         love.graphics.setColor(1, 1, 1)
-        love.graphics.print(distLabelRight, startX2 + leftWidth + numberWidth2, distY)
+        love.graphics.print(distLabelRight, distX + leftW + numW, distY)
 
-        -- Press R
+        -----------------------------------------------------------------
+        -- HIGH SCORE (combined score)
+        -----------------------------------------------------------------
+        local hsLabel = "High Score "
+        local hsValue = tostring(highScore)
+
+        local hsLabelW = labelFont:getWidth(hsLabel)
+        local hsValueW = numberFont:getWidth(hsValue)
+        local hsY = h * 0.59 + offsetY
+        local hsX = (w - (hsLabelW + hsValueW)) / 2
+
+        love.graphics.setFont(labelFont)
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.print(hsLabel, hsX, hsY)
+
+        love.graphics.setFont(numberFont)
+        love.graphics.setColor(1, 1, 0.5)
+        love.graphics.print(hsValue, hsX + hsLabelW, hsY + numOffsetY)
+
+        -----------------------------------------------------------------
+        -- BUTTONS
+        -----------------------------------------------------------------
         love.graphics.setFont(fonts.subtitle)
         love.graphics.setColor(0.8, 0.8, 0.8)
-        love.graphics.printf("Press R to Return to Menu", 0, h * 0.70 + offsetY, w, "center")
-
-        -- NEW: Press Enter 
-        love.graphics.setFont(fonts.subtitle)
-        love.graphics.setColor(0.8, 0.8, 0.8)
-        love.graphics.printf("Press ENTER to Replay",0, h * 0.63 + offsetY, w, "center")
+        love.graphics.printf("Press ENTER to Replay", 0, h * 0.70 + offsetY, w, "center")
+        love.graphics.printf("Press R to Return to Menu", 0, h * 0.76 + offsetY, w, "center")
     end
 end
 
 
 function love.keypressed(key)
 
-    -------------------------------------------------
-    -- MENU
-    -------------------------------------------------
+    --Menu
     if gameState == "menu" then
         if key == "return" or key == "space" then
             gameState = "character_select"
@@ -1333,9 +1446,8 @@ function love.keypressed(key)
         end
 
 
-    -------------------------------------------------
-    -- CHARACTER SELECT
-    -------------------------------------------------
+    
+    --Character
     elseif gameState == "character_select" then
         
         if key == "right" then
@@ -1366,12 +1478,10 @@ function love.keypressed(key)
         end
 
 
-    -------------------------------------------------
-    -- PLAYING (including pause)
-    -------------------------------------------------
+    --Playing
     elseif gameState == "playing" then
         
-        -- PAUSE MENU
+        --PAUSE MENU
         if pauseMenu.active then
             
             if key == "up" then
@@ -1392,7 +1502,7 @@ function love.keypressed(key)
                 if choice == "Resume" then
                     pauseMenu.active = false
 
-                    -- NEW: Countdown when resuming
+                    --Countdown when resuming
                     countdown.active = true
                     countdown.timer  = 0
                     countdown.number = 3
@@ -1406,7 +1516,7 @@ function love.keypressed(key)
                 end
             
             elseif key == "escape" then
-                -- NEW: Resume with ESC + countdown
+                --Resume with ESC + countdown
                 pauseMenu.active = false
                 countdown.active = true
                 countdown.timer  = 0
@@ -1416,13 +1526,13 @@ function love.keypressed(key)
             return
         end
 
-        -- Enter pause
+        --Enter pause
         if key == "escape" then
             pauseMenu.active = true
             return
         end
 
-        -- JUMP
+        --Jump
         if key == "space" and player.onGround and not player.isDead then
             player.yVelocity = player.jumpForce
             player.onGround = false
@@ -1430,7 +1540,7 @@ function love.keypressed(key)
             player.jumpAnim:gotoFrame(1)
         end
 
-        -- FIRE SPELL
+        --Fire spell
         if key == "f" and player.fireMode and not player.isDead and not player.isThrowing then
             
             player.isThrowing = true
@@ -1452,9 +1562,7 @@ function love.keypressed(key)
         end
 
 
-    -------------------------------------------------
-    -- GAME OVER
-    -------------------------------------------------
+    --GAME OVER
     elseif gameState == "gameover" then
         
         if key == "r" then
@@ -1465,7 +1573,7 @@ function love.keypressed(key)
             love.load()
             gameState = "playing"
 
-            -- NEW: countdown when restarting
+            --countdown when restarting
             countdown.active = true
             countdown.timer  = 0
             countdown.number = 3
@@ -1474,16 +1582,30 @@ function love.keypressed(key)
 end
 
 
-function checkCollision(x1, y1, w1, h1, x2, y2, w2, h2)
-    return x1 < x2 + w2 and
-           x2 < x1 + w1 and
-           y1 < y2 + h2 and
-           y2 < y1 + h1
+function checkCollision(x1, y1, w1, h1, x2, y2, w2, h2, shrink1, shrink2)
+    shrink1 = shrink1 or 1
+    shrink2 = shrink2 or 1
+
+    local hw1 = w1 * shrink1
+    local hh1 = h1 * shrink1
+    local hw2 = w2 * shrink2
+    local hh2 = h2 * shrink2
+
+    --recenter shrunk hitboxes
+    local nx1 = x1 + (w1 - hw1) / 2
+    local ny1 = y1 + (h1 - hh1) / 2
+    local nx2 = x2 + (w2 - hw2) / 2
+    local ny2 = y2 + (h2 - hh2) / 2
+
+    return nx1 < nx2 + hw2 and
+           nx2 < nx1 + hw1 and
+           ny1 < ny2 + hh2 and
+           ny2 < ny1 + hh1
 end
 
 function love.mousepressed(x, y, button)
 
-    -- NEW: Handle clicks when game is paused
+    --Handle clicks when game is paused
     if button == 1 and gameState == "playing" and pauseMenu.active then
 
         local screenWidth, screenHeight = love.graphics.getWidth(), love.graphics.getHeight()
@@ -1502,7 +1624,7 @@ function love.mousepressed(x, y, button)
             local btnX = (screenWidth - btnWidth) / 2
             local btnY = startY + (i - 1) * buttonSpacing
 
-            -- Click detection
+            --Click detection
             if x >= btnX and x <= btnX + btnWidth and
                y >= btnY and y <= btnY + btnHeight then
                 
